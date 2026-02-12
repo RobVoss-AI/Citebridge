@@ -14,12 +14,12 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from zoterolm.config import AppConfig
-from zoterolm.sync_engine import SyncEngine
-from zoterolm.state_db import SyncStateDB
-from zoterolm.notebooklm_client import NotebookLMClient
-from zoterolm.zotero_client import ZoteroClient
-from zoterolm.utils import setup_logging, get_zotero_storage_path
+from config import AppConfig
+from sync_engine import SyncEngine
+from state_db import SyncStateDB
+from notebooklm_client import NotebookLMClient
+from zotero_client import ZoteroClient
+from utils import setup_logging, get_zotero_storage_path
 
 setup_logging()
 
