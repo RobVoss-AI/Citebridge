@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import List, Dict, Optional, Callable, Any
 from dataclasses import dataclass, field
 
-from .zotero_client import ZoteroClient, ZoteroCollection, ZoteroItem
-from .notebooklm_client import NotebookLMClient, NLMNotebook, NLMSourceFull
-from .state_db import SyncStateDB
-from .utils import file_hash, file_size_mb
-from .config import AppConfig
+from zotero_client import ZoteroClient, ZoteroCollection, ZoteroItem
+from notebooklm_client import NotebookLMClient, NLMNotebook, NLMSourceFull
+from state_db import SyncStateDB
+from utils import file_hash, file_size_mb
+from config import AppConfig
 
 logger = logging.getLogger(__name__)
 
