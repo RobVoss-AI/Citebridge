@@ -45,6 +45,14 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 echo "✅ Dependencies installed"
 
+# Install the Chromium browser that `notebooklm login` drives.
+# Playwright itself arrives via the notebooklm-py[browser] extra in
+# requirements.txt; the browser binary is a separate one-time download.
+echo ""
+echo "Installing the Chromium browser for NotebookLM login (one-time download)..."
+playwright install chromium
+echo "✅ Browser ready"
+
 # NotebookLM login
 echo ""
 echo "========================================"
@@ -52,7 +60,7 @@ echo "  Step 1: NotebookLM Authentication"
 echo "========================================"
 echo ""
 echo "This will open a browser window for Google sign-in."
-echo "After signing in, return to this terminal."
+echo "After signing in, return to this terminal and press Enter."
 echo ""
 read -p "Press Enter to start NotebookLM login..."
 notebooklm login

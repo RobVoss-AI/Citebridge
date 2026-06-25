@@ -33,12 +33,17 @@ pip install -r requirements.txt -q
 echo Dependencies installed.
 
 echo.
+echo Installing the Chromium browser for NotebookLM login (one-time download)...
+playwright install chromium
+echo Browser ready.
+
+echo.
 echo ========================================
 echo   Step 1: NotebookLM Authentication
 echo ========================================
 echo.
 echo This will open a browser window for Google sign-in.
-echo After signing in, return to this terminal.
+echo After signing in, return to this terminal and press Enter.
 echo.
 pause
 notebooklm login

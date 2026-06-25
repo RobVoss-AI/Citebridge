@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CiteBridge — Setup &amp; Implementation Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --navy-deep:#0d2137; --navy:#1a3a5c; --blue:#2c5282; --blue-light:#e6edf5;
+    --gold-dark:#6b4f10; --gold-muted:#8a7430; --gold:#d4a84b; --gold-cream:#f0ead6;
+    --cream:#f8f5ed; --white:#ffffff; --paper:#f7f5f0; --mono-bg:rgba(26,58,92,0.06);
+    --border:#e0dbd0; --border-heavy:#d6cdb5;
+    --text:#3d3d3a; --text-muted:#6b6b65;
+    --credit:#1a7a4f; --debit:#b83030; --pending:#6b4f10;
+    --radius:8px; --radius-lg:12px;
+    --f-display:'DM Serif Display',serif; --f-body:'Manrope',sans-serif; --f-mono:'IBM Plex Mono',monospace;
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--cream); color:var(--text);
+    font-family:var(--f-body); font-size:15px; line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:880px; margin:0 auto; padding:48px 24px 64px; }
+
+  /* Header */
+  header { margin-bottom:36px; }
+  .tag {
+    font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--gold-muted); margin:0 0 12px;
+  }
+  h1 {
+    font-family:var(--f-display); font-weight:400; color:var(--navy);
+    font-size:44px; line-height:1.1; margin:0 0 8px; letter-spacing:-.01em;
+  }
+  h1 .mark { color:var(--gold); }
+  .lede { font-size:17px; color:var(--text-muted); margin:0; max-width:60ch; }
+
+  /* Sections */
+  section { margin-top:44px; }
+  h2 {
+    font-family:var(--f-display); font-weight:400; color:var(--navy);
+    font-size:27px; margin:0 0 4px; line-height:1.2;
+  }
+  .section-tag {
+    font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--gold-muted); margin:0 0 6px;
+  }
+  h3 {
+    font-family:var(--f-display); font-weight:400; color:var(--navy);
+    font-size:19px; margin:28px 0 6px;
+  }
+  p { margin:0 0 12px; }
+  a { color:var(--blue); text-decoration:none; border-bottom:1px solid var(--border-heavy); }
+  a:hover { color:var(--navy); border-bottom-color:var(--gold); }
+  strong { color:var(--navy-deep); font-weight:600; }
+
+  /* Code */
+  code {
+    font-family:var(--f-mono); font-size:.86em; color:var(--blue);
+    background:var(--mono-bg); padding:2px 6px; border-radius:5px;
+  }
+  pre {
+    font-family:var(--f-mono); font-size:13px; line-height:1.6; color:var(--navy);
+    background:var(--mono-bg); border:0.5px solid var(--border);
+    border-radius:var(--radius); padding:16px 18px; margin:0 0 14px;
+    overflow-x:auto;
+  }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  pre .c { color:var(--gold-muted); } /* comment */
+
+  /* "Read first" callout */
+  .alert {
+    background:var(--paper); border:0.5px solid var(--border-heavy);
+    border-left:4px solid var(--gold); border-radius:var(--radius-lg);
+    padding:24px 26px; margin:8px 0 0;
+  }
+  .alert h2 { font-size:22px; margin-bottom:14px; }
+  .alert ol { margin:0; padding-left:22px; }
+  .alert li { margin-bottom:12px; }
+  .alert li:last-child { margin-bottom:0; }
+  .note {
+    background:var(--blue-light); border-radius:var(--radius); border:0.5px solid #cdd9e8;
+    padding:14px 16px; margin:14px 0; font-size:14px; color:var(--navy);
+  }
+  .note strong { color:var(--navy-deep); }
+
+  /* Steps */
+  .step { display:flex; gap:18px; padding:22px 0; border-top:0.5px solid var(--border); }
+  .step:first-of-type { border-top:none; }
+  .num {
+    flex:none; width:34px; height:34px; border-radius:50%;
+    background:var(--navy); color:var(--cream);
+    font-family:var(--f-mono); font-weight:500; font-size:15px;
+    display:flex; align-items:center; justify-content:center; margin-top:2px;
+  }
+  .step-body { flex:1; min-width:0; }
+  .step-body h3 { margin-top:0; }
+  .step-body > *:last-child { margin-bottom:0; }
+
+  /* Pills (fast path workflow + status) */
+  .fastpath { background:var(--white); border:0.5px solid var(--border); border-radius:var(--radius-lg); padding:24px 26px; }
+  ol.flow { margin:0; padding-left:20px; }
+  ol.flow li { margin-bottom:8px; }
+
+  /* Tables */
+  table { width:100%; border-collapse:collapse; margin:8px 0 14px; font-size:14px; }
+  th, td { text-align:left; padding:11px 14px; border-bottom:0.5px solid var(--border); vertical-align:top; }
+  th { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--gold-muted); font-weight:600; }
+  tr:last-child td { border-bottom:none; }
+  td code { white-space:nowrap; }
+
+  .status { display:inline-block; font-size:13px; font-weight:600; padding:2px 9px; border-radius:6px; white-space:nowrap; }
+  .s-ok { background:rgba(26,122,79,.1); color:var(--credit); }
+  .s-warn { background:rgba(212,168,75,.14); color:var(--gold-dark); }
+  .s-bad { background:rgba(184,48,48,.1); color:var(--debit); }
+
+  /* Trouble cards */
+  .tcard { background:var(--white); border:0.5px solid var(--border); border-radius:var(--radius); padding:16px 18px; margin-bottom:12px; }
+  .tcard .err {
+    font-family:var(--f-mono); font-size:12.5px; color:var(--debit);
+    background:rgba(184,48,48,.07); border-radius:5px; padding:6px 9px;
+    display:inline-block; margin-bottom:8px;
+  }
+  .tcard p { margin:0; font-size:14px; }
+  .tcard pre { margin:10px 0 0; }
+
+  /* Diagram */
+  .diagram {
+    font-family:var(--f-mono); font-size:12.5px; line-height:1.5; color:var(--navy);
+    background:var(--mono-bg); border:0.5px solid var(--border);
+    border-radius:var(--radius); padding:18px; overflow-x:auto; white-space:pre;
+  }
+
+  footer { margin-top:52px; padding-top:20px; border-top:0.5px solid var(--border-heavy); font-size:13px; color:var(--text-muted); }
+  footer a { color:var(--blue); }
+
+  hr.div { border:none; height:0.5px; background:var(--border-heavy); margin:40px 0; }
+
+  @media (max-width:560px) {
+    h1 { font-size:34px; }
+    .wrap { padding:32px 18px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="tag">Voss AI Consulting · Setup &amp; Implementation Guide</p>
+    <h1>Cite<span class="mark">Bridge</span></h1>
+    <p class="lede">One-button bidirectional sync between Zotero and Google NotebookLM. This guide takes you from a blank machine to a working sync — fast path first, full walkthrough and troubleshooting below.</p>
+  </header>
+
+  <!-- READ FIRST -->
+  <div class="alert">
+    <h2>⚠️ Read this first</h2>
+    <p style="margin-top:-6px; color:var(--text-muted);">The three things that trip up almost everyone.</p>
+    <ol>
+      <li><strong>You need Python 3.10 or newer.</strong> Older versions can't install the NotebookLM library. Check with <code>python3 --version</code>.</li>
+      <li><strong>NotebookLM login needs a browser engine (Playwright + Chromium).</strong> This is the #1 reason setup stalls. The setup script installs it for you; if you install manually, run <code>playwright install chromium</code> <em>before</em> <code>notebooklm login</code>.</li>
+      <li><strong>Your NotebookLM login expires every few weeks.</strong> That's normal — it uses your Google session cookies. When sync suddenly fails with an "authentication expired" message, just re-run <code>notebooklm login</code>. Nothing is broken.</li>
+    </ol>
+    <div class="note" style="margin-bottom:0;"><strong>Why is NotebookLM finicky?</strong> Google has no public NotebookLM API for personal accounts. CiteBridge drives NotebookLM the same way your browser does, so it depends on your Google session staying valid. Your <strong>Zotero</strong> side uses an official, stable API and rarely needs attention.</div>
+  </div>
+
+  <!-- FAST PATH -->
+  <section>
+    <p class="section-tag">For confident users</p>
+    <h2>Fast path · ≈15 minutes</h2>
+    <p>Comfortable with a terminal? This is the whole thing. Everyone else: skip to the walkthrough below.</p>
+    <pre><span class="c"># 1. Get the code</span>
+git clone https://github.com/RobVoss-AI/Citebridge.git
+cd Citebridge
+
+<span class="c"># 2. One-command setup (venv + deps + browser + login)</span>
+chmod +x setup.sh &amp;&amp; ./setup.sh      <span class="c"># macOS / Linux</span>
+<span class="c">#   setup.bat                        # Windows: double-click instead</span>
+
+<span class="c"># 3. Launch the app</span>
+source .venv/bin/activate             <span class="c"># .venv\Scripts\activate on Windows</span>
+streamlit run app.py</pre>
+    <div class="fastpath">
+      <p style="margin-top:0;"><strong>Then, in the browser tab that opens</strong> (usually <code>http://localhost:8501</code>):</p>
+      <ol class="flow">
+        <li>Sidebar → <strong>Zotero Connection</strong> → paste API Key + Library ID → <strong>Save &amp; Test Zotero</strong>.</li>
+        <li>Sidebar → <strong>NotebookLM Connection</strong> → <strong>Verify NotebookLM Connection</strong>.</li>
+        <li>Main page → <strong>Push to NotebookLM</strong> → check a collection → <strong>PUSH TO NOTEBOOKLM</strong>.</li>
+      </ol>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- WALKTHROUGH -->
+  <section>
+    <p class="section-tag">Step by step</p>
+    <h2>Detailed walkthrough</h2>
+
+    <div class="step">
+      <div class="num">0</div>
+      <div class="step-body">
+        <h3>Prerequisites</h3>
+        <table>
+          <tr><th>You need</th><th>How to get / check it</th></tr>
+          <tr><td><strong>Python 3.10+</strong></td><td>Run <code>python3 --version</code>. If missing or older, install from <a href="https://www.python.org/downloads/">python.org</a>.</td></tr>
+          <tr><td><strong>Zotero</strong> + a collection</td><td>The free <a href="https://www.zotero.org/download/">Zotero desktop app</a> with a few PDFs to test.</td></tr>
+          <tr><td><strong>Google account</strong> with NotebookLM</td><td>Confirm you can open <a href="https://notebooklm.google.com">notebooklm.google.com</a>.</td></tr>
+          <tr><td><strong>A terminal</strong></td><td>macOS: Terminal. Windows: Command Prompt or PowerShell.</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Get the code</h3>
+        <pre>git clone https://github.com/RobVoss-AI/Citebridge.git
+cd Citebridge</pre>
+        <p>No Git? Use the green <strong>Code → Download ZIP</strong> button on the GitHub page, unzip, and <code>cd</code> into the folder.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Set up the environment</h3>
+        <p><strong>Option A — automatic (recommended).</strong> Creates an isolated environment, installs everything (including the browser engine), and walks you through login:</p>
+        <pre>chmod +x setup.sh &amp;&amp; ./setup.sh     <span class="c"># macOS / Linux</span></pre>
+        <p>On <strong>Windows</strong>, double-click <code>setup.bat</code> instead.</p>
+        <p><strong>Option B — manual.</strong> Run each step yourself:</p>
+        <pre>python3 -m venv .venv               <span class="c"># isolated environment</span>
+source .venv/bin/activate           <span class="c"># .venv\Scripts\activate on Windows</span>
+pip install -r requirements.txt     <span class="c"># CiteBridge dependencies</span>
+playwright install chromium         <span class="c"># one-time browser download</span></pre>
+        <div class="note"><strong>What's a virtual environment (<code>.venv</code>)?</strong> A sandbox that keeps CiteBridge's dependencies separate from your other Python tools. You <strong>activate</strong> it each time you open a new terminal — your prompt shows <code>(.venv)</code> when it's on.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Authenticate NotebookLM</h3>
+        <pre>notebooklm login</pre>
+        <p>A Chromium window opens. <strong>Sign in to Google</strong>, wait for NotebookLM to load, then return to the terminal and <strong>press Enter</strong> to save your session. It's stored locally at <code>~/.notebooklm/storage_state.json</code> and never leaves your machine.</p>
+        <p>See <code>Playwright not installed</code>? You skipped the browser step — run <code>pip install "notebooklm-py[browser]"</code> then <code>playwright install chromium</code>, and retry.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Get your Zotero API key + Library ID</h3>
+        <ol class="flow">
+          <li>Go to <a href="https://www.zotero.org/settings/keys">zotero.org/settings/keys</a> → <strong>Create new private key</strong>.</li>
+          <li>Name it <strong>CiteBridge</strong>; check <strong>Allow library access</strong> and <strong>Allow write access</strong> (write enables note sync-back).</li>
+          <li><strong>Save Key</strong> and copy it — you won't see it again.</li>
+          <li>Note your <strong>Library ID</strong>: the number near the top ("Your userID … is <strong>XXXXXXX</strong>"). It's a <em>number</em>, not your username.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>Launch the app</h3>
+        <pre>source .venv/bin/activate     <span class="c"># .venv\Scripts\activate on Windows</span>
+streamlit run app.py</pre>
+        <p>A tab opens at <code>http://localhost:8501</code>. Keep the terminal running while you use CiteBridge — closing it stops the app.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">6</div>
+      <div class="step-body">
+        <h3>Connect Zotero</h3>
+        <p>In the sidebar, expand <strong>🔶 Zotero Connection</strong>: paste your <strong>API Key</strong> and <strong>Library ID</strong>, leave Library Type as <code>user</code>, optionally set your <code>Zotero/storage</code> path for faster PDF access, then click <strong>💾 Save &amp; Test Zotero</strong> for a green check.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">7</div>
+      <div class="step-body">
+        <h3>Verify NotebookLM</h3>
+        <p>Expand <strong>🟣 NotebookLM Connection</strong> → <strong>🔗 Verify NotebookLM Connection</strong>. This runs a real check, so the dashboard status is trustworthy:</p>
+        <table>
+          <tr><th>Status</th><th>Meaning</th><th>What to do</th></tr>
+          <tr><td><span class="status s-ok">✅ Connected</span></td><td>Live call succeeded this session.</td><td>Start syncing.</td></tr>
+          <tr><td><span class="status s-warn">🔑 Verify needed</span></td><td>Credentials exist but unconfirmed.</td><td>Click <strong>Verify</strong>.</td></tr>
+          <tr><td><span class="status s-bad">❌ Not authenticated</span></td><td>No login found.</td><td>Run <code>notebooklm login</code>.</td></tr>
+        </table>
+        <div class="note" style="margin-bottom:0;">If <strong>Verify</strong> fails after you logged in earlier, your session expired — re-run <code>notebooklm login</code> and verify again.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">8</div>
+      <div class="step-body">
+        <h3>Your first push (Zotero → NotebookLM)</h3>
+        <p>Open the <strong>📤 Push to NotebookLM</strong> tab, check one or more collections, and click <strong>PUSH TO NOTEBOOKLM</strong>. CiteBridge creates a notebook per collection and uploads its PDFs as sources. NotebookLM needs a little time to process each PDF; larger files take longer. Already-synced items are skipped on future runs.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">9</div>
+      <div class="step-body">
+        <h3>The other workflows</h3>
+        <table>
+          <tr><th>Tab</th><th>What it does</th></tr>
+          <tr><td><strong>📤 Push to NotebookLM</strong></td><td>Zotero collections → NotebookLM notebooks (step 8).</td></tr>
+          <tr><td><strong>📥 Import Sources to Zotero</strong></td><td>Pull a notebook's sources into Zotero as library items — URLs, item types, and the <strong>full extracted text</strong> saved as a note. Each notebook becomes a Zotero collection prefixed <code>NLM:</code>.</td></tr>
+          <tr><td><strong>💾 Download Source Files</strong></td><td>Download original source files (PDFs, web pages) from a notebook to a local folder.</td></tr>
+          <tr><td><strong>📋 Sync History</strong></td><td>A log of past runs.</td></tr>
+        </table>
+        <p><strong>Reverse note sync:</strong> under <strong>🔄 Sync Options</strong>, enable <em>"Sync NotebookLM notes back to Zotero"</em> to attach AI-generated notes (matched by title) to your Zotero items, tagged <code>notebooklm-sync</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- HOW IT WORKS -->
+  <section>
+    <p class="section-tag">Mental model</p>
+    <h2>How it works — and why your data is safe</h2>
+    <div class="diagram">Zotero Collection          Google NotebookLM
+┌─────────────────┐        ┌──────────────────┐
+│  AI Ethics      │──push─►│  AI Ethics       │
+│  ├── paper1.pdf │        │  ├── paper1 (src) │
+│  ├── paper2.pdf │◄─import┤  ├── paper2 (src) │
+│  └── paper3.pdf │◄─notes─┤  └── AI Notes     │
+└─────────────────┘        └──────────────────┘</div>
+    <p><strong>State tracking.</strong> A small local database at <code>~/.citebridge/sync_state.db</code> records what's already synced (with file hashes), so repeat runs only handle new or changed items. Settings live at <code>~/.citebridge/config.yaml</code>.</p>
+    <p><strong>Data safety.</strong> CiteBridge only <em>reads</em> from Zotero, except when you opt in to writing notes back — and even then it only <em>adds</em> notes. It never deletes or modifies your existing items. Credentials never leave your machine. If the NotebookLM connection breaks, your Zotero library is untouched.</p>
+  </section>
+
+  <hr class="div">
+
+  <!-- TROUBLESHOOTING -->
+  <section>
+    <p class="section-tag">When something goes wrong</p>
+    <h2>Troubleshooting</h2>
+    <p>These are the actual messages you'll see, with the fix.</p>
+
+    <div class="tcard">
+      <span class="err">Authentication expired or invalid. Redirected to accounts.google.com…</span>
+      <p>Your NotebookLM session expired (every few weeks). Re-authenticate, then click <strong>Verify</strong> in the app:</p>
+      <pre>source .venv/bin/activate
+notebooklm login</pre>
+    </div>
+
+    <div class="tcard">
+      <p style="font-weight:600; color:var(--navy); margin-bottom:6px;">Dashboard stuck on 🔑 "Verify needed"</p>
+      <p>Click <strong>Verify NotebookLM Connection</strong> in the sidebar. If it then errors, your session expired — re-run <code>notebooklm login</code>.</p>
+    </div>
+
+    <div class="tcard">
+      <span class="err">Playwright not installed. Run: pip install notebooklm[browser] …</span>
+      <p>You skipped the browser engine. Fix, then retry <code>notebooklm login</code>:</p>
+      <pre>pip install "notebooklm-py[browser]"
+playwright install chromium</pre>
+    </div>
+
+    <div class="tcard">
+      <span class="err">notebooklm: command not found</span>
+      <p>Your virtual environment isn't active. Run <code>source .venv/bin/activate</code> (macOS/Linux) or <code>.venv\Scripts\activate</code> (Windows), then try again.</p>
+    </div>
+
+    <div class="tcard">
+      <span class="err">ModuleNotFoundError: No module named 'streamlit'</span>
+      <p>Same cause — the venv isn't active, or dependencies weren't installed. Activate the venv and run <code>pip install -r requirements.txt</code>.</p>
+    </div>
+
+    <div class="tcard">
+      <p style="font-weight:600; color:var(--navy); margin-bottom:6px;">NotebookLM library won't install / odd errors</p>
+      <p>You're likely on Python older than 3.10. Check <code>python3 --version</code>, install a newer Python, and recreate the venv.</p>
+    </div>
+
+    <div class="tcard">
+      <span class="err">Zotero connection failed</span>
+      <p>Re-copy the <strong>API key</strong>; confirm the <strong>Library ID is a number</strong> (not your username); ensure the key has <strong>library access</strong> enabled (and write access for note sync-back).</p>
+    </div>
+
+    <div class="tcard">
+      <p style="font-weight:600; color:var(--navy); margin-bottom:6px;">"No PDFs found" · slow sync · port in use</p>
+      <p>Some items simply lack a PDF. Set your <code>Zotero/storage</code> path for faster/reliable PDF access. Slow sync is normal — NotebookLM processes each PDF before continuing. Port busy? <code>streamlit run app.py --server.port 8502</code>.</p>
+    </div>
+
+    <div class="note"><strong>Don't blindly upgrade the NotebookLM library.</strong> CiteBridge pins <code>notebooklm-py</code> to a tested version; newer releases change the API and can break imports. Avoid <code>pip install --upgrade notebooklm-py</code> unless you intend to re-test.</div>
+  </section>
+
+  <hr class="div">
+
+  <!-- QUICK REF -->
+  <section>
+    <p class="section-tag">Cheat sheet</p>
+    <h2>Quick command reference</h2>
+    <pre><span class="c"># First-time setup (manual)</span>
+python3 -m venv .venv
+source .venv/bin/activate            <span class="c"># .venv\Scripts\activate on Windows</span>
+pip install -r requirements.txt
+playwright install chromium
+notebooklm login
+
+<span class="c"># Every time you use CiteBridge</span>
+source .venv/bin/activate
+streamlit run app.py
+
+<span class="c"># When NotebookLM stops working</span>
+notebooklm login                     <span class="c"># then click "Verify" in the app</span></pre>
+  </section>
+
+  <footer>
+    Built by <a href="https://www.vossaiconsulting.com">Voss AI Consulting</a> ·
+    Questions or custom integrations: <a href="https://www.vossaiconsulting.com">vossaiconsulting.com</a> ·
+    <a href="https://www.robvoss.com">robvoss.com</a>
+  </footer>
+
+</div>
+</body>
+</html>

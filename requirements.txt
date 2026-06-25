@@ -3,7 +3,11 @@ pyzotero>=1.6.0
 # public API across minor versions (e.g. sources.get_guide() returns a dict
 # in 0.3.x but a typed dataclass in 0.6.0+). CiteBridge is written and tested
 # against the 0.3.x line. Upgrade deliberately, not implicitly — see README.
-notebooklm-py>=0.3.2,<0.4.0
+#
+# The [browser] extra installs Playwright, which `notebooklm login` requires to
+# open the Google sign-in window. After installing, you must also download the
+# browser binary once:  playwright install chromium
+notebooklm-py[browser]>=0.3.2,<0.4.0
 streamlit>=1.30.0
 pyyaml>=6.0
 httpx>=0.24.0

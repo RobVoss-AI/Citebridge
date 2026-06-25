@@ -6,6 +6,11 @@ CiteBridge reads your Zotero collections, uploads PDFs directly to NotebookLM as
 
 Built by [Voss AI Consulting](https://www.vossaiconsulting.com)
 
+> 📘 **New here? Read the [Setup & Implementation Guide](docs/SETUP_GUIDE.md).**
+> It's a step-by-step walkthrough with a full troubleshooting section — the
+> fastest way to a working sync. A shareable, printable version is also available
+> as [`docs/setup-guide.html`](docs/setup-guide.html).
+
 ---
 
 ## What It Does
@@ -48,6 +53,7 @@ python3 -m venv .venv
 source .venv/bin/activate     # Mac/Linux
 # .venv\Scripts\activate      # Windows
 pip install -r requirements.txt
+playwright install chromium   # one-time browser download for NotebookLM login
 ```
 
 ### Step 2: Authenticate NotebookLM
@@ -60,7 +66,12 @@ source .venv/bin/activate     # Mac/Linux
 notebooklm login
 ```
 
-This opens Google sign-in in your browser. After authenticating, return to the terminal. Your auth tokens are saved locally at `~/.notebooklm/`.
+This opens Google sign-in in your browser. After authenticating, return to the terminal and press Enter. Your auth tokens are saved locally at `~/.notebooklm/`.
+
+> **`Playwright not installed`?** The login step needs a browser engine. Run
+> `pip install "notebooklm-py[browser]"` then `playwright install chromium`, and
+> try again. (The `setup.sh` / `setup.bat` scripts and the manual steps above
+> already include this.)
 
 ### Step 3: Get Your Zotero API Key
 
