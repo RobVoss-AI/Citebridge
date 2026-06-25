@@ -13,7 +13,9 @@ cached for reuse across calls.
 
 import asyncio
 import logging
+import mimetypes
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +56,19 @@ class NLMSourceFull:
     url: Optional[str] = None
     content: str = ""
     char_count: int = 0
+
+
+@dataclass
+class NLMSourceDownloadResult:
+    """Result of downloading a single source file."""
+    source_id: str
+    title: str
+    url: str = ""
+    file_path: str = ""
+    success: bool = False
+    error: str = ""
+    content_type: str = ""
+    size_bytes: int = 0
 
 
 @dataclass
@@ -388,25 +403,67 @@ class NotebookLMClient:
             for s in raw
         ]
 
-    def get_source_fulltext(self, notebook_id: str,
-                             source_id: str) -> NLMSourceFull:
+    def get_source_content(self, notebook_id: str, source_id: str,
+                           source: Optional[NLMSource] = None) -> NLMSourceFull:
         """
-        Get the full extracted text content of a source.
-        This is the key method for pulling sources into Zotero —
-        it returns everything NotebookLM extracted from the original document.
+        Get the best available text content for a source.
+
+        Primary path: the full extracted text via ``sources.get_fulltext()``
+        — this is the complete text NotebookLM extracted from the source and
+        is the real value of an import. If that is empty or unavailable, we
+        fall back to the AI-generated summary + keywords from the source guide.
+
+        Args:
+            notebook_id: The notebook the source belongs to.
+            source_id: The source to fetch content for.
+            source: Optional pre-fetched NLMSource (title/type/url). Pass this
+                    when iterating a known source list to avoid re-listing the
+                    whole notebook for every source.
         """
+        if source is None:
+            for s in self.list_sources(notebook_id):
+                if s.id == source_id:
+                    source = s
+                    break
+
+        content = ""
+
+        # Primary: real extracted full text
+        try:
+            full = self.get_source_fulltext(notebook_id, source_id)
+            content = (getattr(full, "content", "") or "").strip()
+        except Exception as e:
+            logger.warning(f"get_fulltext failed for {source_id}: {e}")
+
+        # Fallback: AI summary + keywords from the source guide
+        if not content:
+            try:
+                guide = self.get_source_guide(notebook_id, source_id)
+                summary, keywords = self._guide_summary_keywords(guide)
+                parts = []
+                if summary:
+                    parts.append(summary)
+                if keywords:
+                    parts.append("\n\nKeywords: " + ", ".join(keywords))
+                content = "".join(parts)
+            except Exception as e:
+                logger.warning(f"get_guide fallback failed for {source_id}: {e}")
+
+        return NLMSourceFull(
+            id=source_id,
+            title=source.title if source else "",
+            source_type=source.source_type if source else "",
+            url=source.url if source else None,
+            content=content,
+            char_count=len(content),
+        )
+
+    def get_source_fulltext(self, notebook_id: str, source_id: str):
+        """Get the full extracted text for a source (SourceFulltext object)."""
         async def _op(client):
             return await client.sources.get_fulltext(notebook_id, source_id)
 
-        ft = self._call(_op)
-        return NLMSourceFull(
-            id=ft.source_id,
-            title=ft.title,
-            source_type=str(ft.kind),
-            url=ft.url,
-            content=ft.content,
-            char_count=ft.char_count,
-        )
+        return self._call(_op)
 
     def get_source_guide(self, notebook_id: str,
                           source_id: str) -> Dict[str, Any]:
@@ -416,10 +473,25 @@ class NotebookLMClient:
 
         return self._call(_op)
 
+    @staticmethod
+    def _guide_summary_keywords(guide: Any):
+        """Read (summary, keywords) from a source guide.
+
+        Tolerant of the two shapes notebooklm-py has returned: a plain dict
+        (0.3.x–0.5.x) and a typed ``SourceGuide`` dataclass (0.6.0+).
+        """
+        if guide is None:
+            return "", []
+        if isinstance(guide, dict):
+            return guide.get("summary", "") or "", list(guide.get("keywords", []) or [])
+        summary = getattr(guide, "summary", "") or ""
+        keywords = getattr(guide, "keywords", []) or []
+        return summary, list(keywords)
+
     def get_all_sources_with_content(self, notebook_id: str
                                       ) -> List[NLMSourceFull]:
         """
-        Get all sources in a notebook with their full text content.
+        Get all sources in a notebook with their AI-generated summaries.
         This is the primary method for importing a NotebookLM research
         collection into Zotero.
         """
@@ -428,18 +500,18 @@ class NotebookLMClient:
 
         for src in sources:
             try:
-                full = self.get_source_fulltext(notebook_id, src.id)
-                # Merge the URL from list_sources if fulltext didn't have it
+                full = self.get_source_content(notebook_id, src.id, source=src)
+                # Merge the URL from list_sources if content didn't have it
                 if not full.url and src.url:
                     full.url = src.url
                 if not full.source_type and src.source_type:
                     full.source_type = src.source_type
                 results.append(full)
                 logger.info(
-                    f"Got fulltext for: {full.title} ({full.char_count} chars)"
+                    f"Got content for: {full.title} ({full.char_count} chars)"
                 )
             except Exception as e:
-                logger.error(f"Failed to get fulltext for {src.title}: {e}")
+                logger.error(f"Failed to get content for {src.title}: {e}")
                 # Still include with basic info
                 results.append(NLMSourceFull(
                     id=src.id, title=src.title,
@@ -466,3 +538,173 @@ class NotebookLMClient:
             )
             for n in raw
         ]
+
+    # ══════════════════════════════════════════
+    #  Source Download Operations
+    # ══════════════════════════════════════════
+
+    @staticmethod
+    def _sanitize_filename(name: str, max_len: int = 200) -> str:
+        """Convert a source title to a safe filename."""
+        # Remove/replace invalid characters
+        safe = re.sub(r'[<>:"/\\|?*]', '_', name)
+        safe = safe.strip('. ')
+        if not safe:
+            safe = "untitled"
+        if len(safe) > max_len:
+            safe = safe[:max_len].rstrip('. ')
+        return safe
+
+    @staticmethod
+    def _guess_extension(content_type: str, url: str) -> str:
+        """Guess a file extension from content type or URL."""
+        # Try content type first
+        if content_type:
+            ext = mimetypes.guess_extension(content_type.split(';')[0].strip())
+            if ext and ext != '.bin':
+                return ext
+
+        # Try URL
+        path = url.split('?')[0].split('#')[0]
+        if '.' in path.split('/')[-1]:
+            ext = '.' + path.split('/')[-1].rsplit('.', 1)[-1].lower()
+            if len(ext) <= 6:
+                return ext
+
+        # Defaults based on common content types
+        ct = (content_type or '').lower()
+        if 'pdf' in ct:
+            return '.pdf'
+        if 'html' in ct:
+            return '.html'
+        if 'json' in ct:
+            return '.json'
+        if 'xml' in ct:
+            return '.xml'
+        if 'text' in ct:
+            return '.txt'
+
+        return '.html'  # Default for web sources
+
+    def download_source_file(self, source: NLMSource,
+                              output_dir: str,
+                              timeout: float = 30.0
+                              ) -> NLMSourceDownloadResult:
+        """
+        Download a single source file from its original URL.
+
+        Args:
+            source: The NLMSource to download.
+            output_dir: Directory to save the file.
+            timeout: HTTP request timeout in seconds.
+
+        Returns:
+            NLMSourceDownloadResult with download details.
+        """
+        result = NLMSourceDownloadResult(
+            source_id=source.id,
+            title=source.title,
+            url=source.url or "",
+        )
+
+        if not source.url:
+            result.error = "No URL available (uploaded file — cannot download)"
+            return result
+
+        try:
+            import httpx
+
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; CiteBridge/1.0)",
+                },
+            ) as http:
+                response = http.get(source.url)
+                response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "")
+                result.content_type = content_type
+
+                # Determine filename
+                ext = self._guess_extension(content_type, source.url)
+                safe_name = self._sanitize_filename(source.title)
+                if not safe_name.lower().endswith(ext.lower()):
+                    safe_name += ext
+
+                # Handle duplicate filenames
+                out_path = Path(output_dir) / safe_name
+                counter = 2
+                base = out_path.stem
+                while out_path.exists():
+                    out_path = Path(output_dir) / f"{base} ({counter}){ext}"
+                    counter += 1
+
+                # Write file
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, "wb") as f:
+                    f.write(response.content)
+
+                result.file_path = str(out_path)
+                result.size_bytes = len(response.content)
+                result.success = True
+                logger.info(
+                    f"Downloaded: {source.title} → {out_path.name} "
+                    f"({result.size_bytes:,} bytes)"
+                )
+
+        except Exception as e:
+            result.error = str(e)
+            logger.error(f"Failed to download {source.title}: {e}")
+
+        return result
+
+    def download_notebook_sources(self, notebook_id: str,
+                                   output_dir: str,
+                                   progress_callback=None,
+                                   timeout: float = 30.0
+                                   ) -> List[NLMSourceDownloadResult]:
+        """
+        Download all source files from a notebook.
+
+        Args:
+            notebook_id: The notebook to download sources from.
+            output_dir: Directory to save files (created if needed).
+            progress_callback: Optional callback(msg) for progress updates.
+            timeout: Per-file HTTP timeout in seconds.
+
+        Returns:
+            List of NLMSourceDownloadResult for each source.
+        """
+        emit = progress_callback or (lambda msg: None)
+
+        sources = self.list_sources(notebook_id)
+        emit(f"Found {len(sources)} sources")
+
+        results = []
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        for i, src in enumerate(sources, 1):
+            emit(f"  [{i}/{len(sources)}] {src.title}")
+
+            if not src.url:
+                result = NLMSourceDownloadResult(
+                    source_id=src.id,
+                    title=src.title,
+                    error="No URL (uploaded file — cannot download)",
+                )
+                results.append(result)
+                emit(f"    ⏭️ Skipped — no URL")
+                continue
+
+            dl_result = self.download_source_file(src, output_dir, timeout)
+            results.append(dl_result)
+
+            if dl_result.success:
+                size_str = f"{dl_result.size_bytes / 1024:.0f}KB"
+                emit(f"    ✅ Downloaded ({size_str})")
+            else:
+                emit(f"    ❌ {dl_result.error}")
+
+        return results

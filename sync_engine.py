@@ -9,7 +9,9 @@ from typing import List, Dict, Optional, Callable, Any
 from dataclasses import dataclass, field
 
 from zotero_client import ZoteroClient, ZoteroCollection, ZoteroItem
-from notebooklm_client import NotebookLMClient, NLMNotebook, NLMSourceFull
+from notebooklm_client import (
+    NotebookLMClient, NLMNotebook, NLMSourceFull, NLMSourceDownloadResult,
+)
 from state_db import SyncStateDB
 from utils import file_hash, file_size_mb
 from config import AppConfig
@@ -496,6 +498,106 @@ class SyncEngine:
             )
 
         self._emit("Import complete!")
+        return result
+
+    # ══════════════════════════════════════════════════════
+    #  SOURCE DOWNLOAD: NotebookLM → Local Files
+    # ══════════════════════════════════════════════════════
+
+    def download_notebook_sources(self, notebook_id: str,
+                                   notebook_title: str,
+                                   output_dir: str,
+                                   timeout: float = 30.0
+                                   ) -> SyncResult:
+        """
+        Download all source files from a NotebookLM notebook.
+
+        Creates a subdirectory named after the notebook and downloads
+        each source file from its original URL.
+
+        Args:
+            notebook_id: NotebookLM notebook ID
+            notebook_title: Display name (used for subdirectory)
+            output_dir: Base output directory
+            timeout: Per-file HTTP timeout
+
+        Returns:
+            SyncResult with download counts
+        """
+        result = SyncResult(success=True, message="")
+        safe_name = notebook_title.replace("/", "_").replace("\\", "_").strip()
+        nb_dir = Path(output_dir) / safe_name
+
+        self._emit(f"📂 Downloading sources from: {notebook_title}")
+        self._emit(f"   Saving to: {nb_dir}")
+
+        dl_results = self.nlm.download_notebook_sources(
+            notebook_id,
+            str(nb_dir),
+            progress_callback=self._emit,
+            timeout=timeout,
+        )
+
+        for dl in dl_results:
+            if dl.success:
+                result.items_synced += 1
+            elif "No URL" in dl.error:
+                result.items_skipped += 1
+            else:
+                result.errors.append(f"{dl.title}: {dl.error}")
+
+        result.message = (
+            f"{notebook_title}: {result.items_synced} downloaded, "
+            f"{result.items_skipped} skipped (no URL)"
+        )
+        if result.errors:
+            result.success = False
+
+        self.db.log(
+            "download_sources",
+            "success" if result.success else "partial",
+            result.message,
+        )
+        return result
+
+    def download_all_notebooks(self, notebook_ids: List[str],
+                                output_dir: str,
+                                timeout: float = 30.0
+                                ) -> FullSyncResult:
+        """
+        Download sources from multiple NotebookLM notebooks.
+
+        Args:
+            notebook_ids: List of notebook IDs to download from
+            output_dir: Base output directory
+            timeout: Per-file HTTP timeout
+
+        Returns:
+            FullSyncResult with overall download stats
+        """
+        result = FullSyncResult()
+
+        all_notebooks = self.nlm.list_notebooks()
+        nb_map = {nb.id: nb for nb in all_notebooks}
+
+        for nb_id in notebook_ids:
+            nb = nb_map.get(nb_id)
+            title = nb.title if nb else nb_id
+
+            dl_result = self.download_notebook_sources(
+                nb_id, title, output_dir, timeout
+            )
+
+            result.collections_processed += 1
+            result.items_uploaded += dl_result.items_synced
+            result.items_skipped += dl_result.items_skipped
+            result.errors.extend(dl_result.errors)
+            result.log.append(
+                f"{'✅' if dl_result.success else '⚠️'} {title}: "
+                f"{dl_result.message}"
+            )
+
+        self._emit("Download complete!")
         return result
 
     # ══════════════════════════════════════════════════════

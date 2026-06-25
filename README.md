@@ -22,7 +22,7 @@ Built by [Voss AI Consulting](https://www.vossaiconsulting.com)
 
 ### Prerequisites
 
-- **Python 3.9+** — [Download here](https://www.python.org/downloads/)
+- **Python 3.10+** — [Download here](https://www.python.org/downloads/) (required by `notebooklm-py`)
 - **Zotero** desktop app installed with some collections
 - **A Google account** with access to [NotebookLM](https://notebooklm.google.com)
 
@@ -133,14 +133,16 @@ citebridge/
 ├── requirements.txt        # Python dependencies
 ├── setup.sh / setup.bat    # One-line setup scripts
 ├── README.md               # This file
-└── citebridge/               # Core library
-    ├── config.py            # Configuration management
-    ├── zotero_client.py     # Zotero API wrapper
-    ├── notebooklm_client.py # NotebookLM API wrapper
-    ├── sync_engine.py       # Sync orchestration
-    ├── state_db.py          # SQLite state tracking
-    └── utils.py             # Helpers
+├── config.py               # Configuration management
+├── zotero_client.py        # Zotero API wrapper (pyzotero)
+├── notebooklm_client.py    # NotebookLM API wrapper (notebooklm-py)
+├── sync_engine.py          # Sync orchestration
+├── state_db.py             # SQLite state tracking
+└── utils.py                # Helpers
 ```
+
+All modules live flat at the project root (imported directly, e.g.
+`from sync_engine import SyncEngine`) — there is no nested package.
 
 ---
 
@@ -169,7 +171,10 @@ citebridge/
 ### NotebookLM API errors
 - The NotebookLM integration uses an unofficial library that may occasionally break
 - If this happens, your Zotero data is never affected
-- Try updating: `pip install --upgrade notebooklm-py`
+- **First, re-authenticate:** most failures are expired Google tokens — run `notebooklm login` again
+- CiteBridge pins `notebooklm-py` to the `0.3.x` line it's tested against. Newer
+  releases change the API (e.g. how source guides are returned), so avoid a blind
+  `pip install --upgrade` — upgrade deliberately and re-test the import flow
 
 ---
 
@@ -198,7 +203,7 @@ sync:
 
 ## Important Notes
 
-- **NotebookLM API:** This app uses an unofficial library (`notebooklm-py`) that relies on undocumented Google APIs. It works well but may break if Google changes their internal APIs. If that happens, update the library and try again.
+- **NotebookLM API:** This app uses an unofficial library (`notebooklm-py`) that relies on undocumented Google APIs and your Google account cookies. It works well but the cookies expire periodically (re-run `notebooklm login`) and Google may change their internal APIs. CiteBridge pins the library to a tested version — upgrade deliberately rather than automatically. Note: Google's only *official* NotebookLM API is the Enterprise (Google Cloud) offering, which is not available for personal accounts, so the unofficial library remains the only option for individual use.
 - **Your data is safe:** The app only reads from Zotero (except when writing notes back). It never deletes or modifies your existing Zotero items.
 - **Auth tokens stay local:** All credentials are stored on your machine only (`~/.citebridge/` and `~/.notebooklm/`).
 

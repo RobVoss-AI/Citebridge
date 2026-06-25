@@ -1,4 +1,9 @@
 pyzotero>=1.6.0
-notebooklm-py>=0.1.0
+# Pinned: notebooklm-py drives Google's undocumented APIs and changes its
+# public API across minor versions (e.g. sources.get_guide() returns a dict
+# in 0.3.x but a typed dataclass in 0.6.0+). CiteBridge is written and tested
+# against the 0.3.x line. Upgrade deliberately, not implicitly — see README.
+notebooklm-py>=0.3.2,<0.4.0
 streamlit>=1.30.0
 pyyaml>=6.0
+httpx>=0.24.0

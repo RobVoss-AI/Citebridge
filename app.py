@@ -234,8 +234,19 @@ with col1:
     zotero_ok = st.session_state.config.is_zotero_configured()
     st.metric("Zotero", "✅ Connected" if zotero_ok else "❌ Not configured")
 with col2:
-    nlm_ok = NotebookLMClient.is_authenticated()
-    st.metric("NotebookLM", "✅ Connected" if nlm_ok else "❌ Not authenticated")
+    # "Authed" = credentials are present (file / env var / Streamlit secret).
+    # "Verified" = a real API call succeeded this session. File presence alone
+    # does NOT mean the connection works — Google tokens expire periodically,
+    # so we never report "Connected" until a live check has passed.
+    nlm_authed = NotebookLMClient.is_authenticated()
+    nlm_verified = st.session_state.get("nlm_connected", False)
+    if nlm_verified:
+        nlm_status = "✅ Connected"
+    elif nlm_authed:
+        nlm_status = "🔑 Verify needed"
+    else:
+        nlm_status = "❌ Not authenticated"
+    st.metric("NotebookLM", nlm_status)
 with col3:
     db = SyncStateDB()
     stats = db.get_sync_stats()
@@ -248,15 +259,23 @@ if not zotero_ok:
     st.warning(
         "👈 Configure your Zotero API key in the sidebar to get started."
     )
-elif not nlm_ok:
+elif not nlm_authed:
     st.warning(
-        "👈 Authenticate with NotebookLM (run `notebooklm login` in terminal) "
-        "then verify the connection in the sidebar."
+        "👈 Authenticate with NotebookLM — run `notebooklm login` in your "
+        "terminal, then click **Verify NotebookLM Connection** in the sidebar."
     )
 else:
-    tab_push, tab_import, tab_history = st.tabs([
+    if not nlm_verified:
+        st.info(
+            "🔑 NotebookLM credentials found but **not verified** this session. "
+            "Click **Verify NotebookLM Connection** in the sidebar before "
+            "syncing. NotebookLM tokens expire periodically — if verification "
+            "fails, re-run `notebooklm login` in your terminal."
+        )
+    tab_push, tab_import, tab_download, tab_history = st.tabs([
         "📤 Push to NotebookLM",
         "📥 Import Sources to Zotero",
+        "💾 Download Source Files",
         "📋 Sync History",
     ])
 
@@ -465,7 +484,138 @@ else:
             )
 
     # ══════════════════════════════════════
-    # TAB 3: History
+    # TAB 3: Download Source Files
+    # ══════════════════════════════════════
+    with tab_download:
+        st.markdown("### 💾 Download Source Files from NotebookLM")
+        st.markdown(
+            "Download the **original files** (PDFs, web pages, etc.) from "
+            "your NotebookLM notebooks to a local directory. "
+            "This is especially useful for sources added by NotebookLM's "
+            "research features that you don't have locally."
+        )
+
+        try:
+            nlm_dl = NotebookLMClient(
+                st.session_state.config.notebooklm.storage_path or None,
+            )
+            dl_notebooks = nlm_dl.list_notebooks(include_source_counts=True)
+
+            if not dl_notebooks:
+                st.info("No notebooks found in NotebookLM.")
+            else:
+                selected_dl_notebooks = []
+                dl_cols = st.columns(2)
+
+                for i, nb in enumerate(sorted(dl_notebooks, key=lambda n: n.title)):
+                    with dl_cols[i % 2]:
+                        checked = st.checkbox(
+                            f"📓 **{nb.title}** ({nb.sources_count} sources)",
+                            key=f"dl_{nb.id}",
+                        )
+                        if checked:
+                            selected_dl_notebooks.append(nb.id)
+
+                st.divider()
+
+                # Output directory selection
+                default_dir = str(Path.home() / "CiteBridge Downloads")
+                output_dir = st.text_input(
+                    "Download directory",
+                    value=default_dir,
+                    key="download_dir",
+                    help="Each notebook gets its own subdirectory inside this folder.",
+                )
+
+                dl_timeout = st.slider(
+                    "Download timeout per file (seconds)",
+                    min_value=10, max_value=120, value=30, step=5,
+                    key="dl_timeout",
+                    help="Increase this if downloads are timing out for large files.",
+                )
+
+                col_dl1, col_dl2, col_dl3 = st.columns([1, 2, 1])
+                with col_dl2:
+                    download_clicked = st.button(
+                        "💾 **DOWNLOAD SOURCE FILES**",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=len(selected_dl_notebooks) == 0,
+                        key="download_now",
+                    )
+
+                if len(selected_dl_notebooks) == 0:
+                    st.caption("Select at least one notebook to download from.")
+
+                if download_clicked and selected_dl_notebooks:
+                    st.session_state.sync_log = []
+
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    step_count = [0]
+                    total_steps = len(selected_dl_notebooks) * 5
+
+                    def progress_callback_download(msg):
+                        step_count[0] += 1
+                        progress = min(step_count[0] / max(total_steps, 1), 0.99)
+                        progress_bar.progress(progress)
+                        status_text.markdown(f"**{msg}**")
+                        st.session_state.sync_log.append(msg)
+
+                    try:
+                        engine = SyncEngine(
+                            st.session_state.config,
+                            progress_callback=progress_callback_download,
+                        )
+                        dl_result = engine.download_all_notebooks(
+                            selected_dl_notebooks,
+                            output_dir=output_dir,
+                            timeout=float(dl_timeout),
+                        )
+                        progress_bar.progress(1.0)
+                        status_text.empty()
+
+                        # Show results
+                        downloaded = dl_result.items_uploaded
+                        skipped = dl_result.items_skipped
+                        errors = len(dl_result.errors)
+
+                        if dl_result.success:
+                            st.success(
+                                f"✅ Download complete!\n\n"
+                                f"**{downloaded}** files downloaded, "
+                                f"**{skipped}** skipped (no URL)\n\n"
+                                f"Saved to: `{output_dir}`"
+                            )
+                        else:
+                            st.warning(
+                                f"⚠️ Download completed with issues:\n\n"
+                                f"**{downloaded}** downloaded, "
+                                f"**{skipped}** skipped, "
+                                f"**{errors}** failed"
+                            )
+                            for err in dl_result.errors:
+                                st.error(err)
+
+                        # Show per-notebook breakdown
+                        if dl_result.log:
+                            with st.expander("📋 Per-Notebook Details"):
+                                for entry in dl_result.log:
+                                    st.markdown(entry)
+
+                    except Exception as e:
+                        st.error(f"❌ Download failed: {e}")
+                        logging.exception("Download failed")
+
+        except Exception as e:
+            st.error(f"❌ Failed to load NotebookLM notebooks: {e}")
+            st.info(
+                "Make sure you've authenticated with NotebookLM. "
+                "Run `notebooklm login` in your terminal."
+            )
+
+    # ══════════════════════════════════════
+    # TAB 4: History
     # ══════════════════════════════════════
     with tab_history:
         st.markdown("### 📋 Sync History")
