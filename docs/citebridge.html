@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CiteBridge — Zotero meets NotebookLM | Voss AI Consulting Labs</title>
+<meta name="description" content="The first bidirectional connector between your Zotero reference manager and Google NotebookLM. Push collections in, pull AI insights back. Runs locally for privacy.">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --navy-deep:#0d2137; --navy:#1a3a5c; --blue:#2c5282; --blue-mid:#3a7bc8; --blue-light:#e6edf5;
+    --gold-dark:#6b4f10; --gold-muted:#8a7430; --gold:#d4a84b; --gold-warm:#e8d5a0; --gold-cream:#f0ead6;
+    --cream:#f8f5ed; --white:#ffffff; --paper:#f7f5f0; --mono-bg:rgba(26,58,92,0.06);
+    --border:#e0dbd0; --border-heavy:#d6cdb5;
+    --text:#3d3d3a; --text-muted:#6b6b65;
+    --credit:#1a7a4f; --debit:#b83030;
+    --radius:8px; --radius-lg:12px;
+    --f-display:'DM Serif Display',serif; --f-body:'Manrope',sans-serif; --f-mono:'IBM Plex Mono',monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--cream); color:var(--text);
+    font-family:var(--f-body); font-size:16px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  a { color:var(--blue); text-decoration:none; }
+  a:hover { color:var(--navy); }
+  h1,h2,h3 { font-family:var(--f-display); font-weight:400; color:var(--navy); margin:0; }
+  p { margin:0 0 14px; }
+  strong { color:var(--navy-deep); font-weight:600; }
+  code { font-family:var(--f-mono); font-size:.85em; color:var(--blue); background:var(--mono-bg); padding:2px 6px; border-radius:5px; }
+  .tag { font-size:11.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--gold-muted); }
+
+  /* Buttons */
+  .btn { display:inline-block; font-family:var(--f-body); font-weight:600; font-size:14px; padding:12px 26px; border-radius:var(--radius); border:1px solid transparent; cursor:pointer; transition:opacity .15s, transform .1s; }
+  .btn:active { transform:scale(.98); }
+  .btn-gold { background:var(--gold); color:var(--navy-deep); }
+  .btn-gold:hover { opacity:.88; color:var(--navy-deep); }
+  .btn-primary { background:var(--navy); color:var(--cream); }
+  .btn-primary:hover { opacity:.9; color:var(--cream); }
+  .btn-outline { background:transparent; border-color:var(--border-heavy); color:var(--navy); }
+  .btn-outline:hover { border-color:var(--gold); color:var(--navy); }
+
+  /* Nav */
+  nav { border-bottom:0.5px solid var(--border-heavy); background:rgba(248,245,237,.85); backdrop-filter:saturate(150%) blur(6px); position:sticky; top:0; z-index:10; }
+  .nav-inner { display:flex; align-items:center; justify-content:space-between; height:64px; }
+  .brand { font-family:var(--f-display); font-size:20px; color:var(--navy); }
+  .brand .dot { color:var(--gold); }
+  .nav-right { display:flex; align-items:center; gap:20px; font-size:14px; font-weight:500; }
+  .nav-right a.lnk { color:var(--gold-muted); }
+  .nav-right a.lnk:hover { color:var(--navy); }
+
+  /* Hero */
+  .hero { padding:72px 0 56px; }
+  .hero .tag { display:block; margin-bottom:18px; }
+  .hero h1 { font-size:58px; line-height:1.04; letter-spacing:-.01em; margin-bottom:14px; }
+  .hero h1 .dot { color:var(--gold); }
+  .hero .lede { font-size:21px; color:var(--navy); font-family:var(--f-display); margin-bottom:10px; }
+  .hero p.body { font-size:17px; color:var(--text-muted); max-width:60ch; margin-bottom:26px; }
+  .hero .cta-row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .hero .meta { margin-top:18px; font-size:13.5px; color:var(--text-muted); }
+  .hero .meta span { color:var(--gold-muted); font-weight:600; }
+
+  section.band { padding:56px 0; border-top:0.5px solid var(--border); }
+  section .tag { display:block; margin-bottom:10px; }
+  h2.sec { font-size:34px; line-height:1.1; margin-bottom:10px; }
+  .sec-lead { font-size:17px; color:var(--text-muted); max-width:62ch; margin-bottom:32px; }
+
+  /* Flow diagram */
+  .flow { display:grid; grid-template-columns:1fr auto 1fr; gap:18px; align-items:center; margin:6px 0 8px; }
+  .flow-box { background:var(--white); border:0.5px solid var(--border); border-radius:var(--radius-lg); padding:22px 24px; }
+  .flow-box h3 { font-size:19px; margin-bottom:10px; }
+  .flow-box .item { font-family:var(--f-mono); font-size:13px; color:var(--blue); padding:5px 0; border-bottom:0.5px solid var(--border); }
+  .flow-box .item:last-child { border-bottom:none; }
+  .flow-arrows { display:flex; flex-direction:column; gap:14px; align-items:center; color:var(--gold-muted); font-size:12px; font-weight:600; letter-spacing:.05em; }
+  .arrow { display:flex; flex-direction:column; align-items:center; }
+  .arrow .line { font-family:var(--f-mono); color:var(--gold); font-size:18px; }
+
+  /* Feature cards */
+  .features { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:32px; }
+  .fcard { background:var(--white); border:0.5px solid var(--border); border-radius:var(--radius-lg); padding:24px; }
+  .fcard .ic { font-size:22px; margin-bottom:10px; }
+  .fcard h3 { font-size:19px; margin-bottom:8px; }
+  .fcard p { font-size:14.5px; color:var(--text-muted); margin:0; }
+
+  /* App preview — browser mockup */
+  .browser { background:var(--white); border:0.5px solid var(--border-heavy); border-radius:var(--radius-lg); overflow:hidden; box-shadow:0 1px 0 var(--border); }
+  .browser-bar { display:flex; align-items:center; gap:8px; padding:11px 14px; background:var(--paper); border-bottom:0.5px solid var(--border); }
+  .dots { display:flex; gap:6px; }
+  .dots i { width:11px; height:11px; border-radius:50%; display:inline-block; }
+  .dots i:nth-child(1){background:#e08a8a;} .dots i:nth-child(2){background:var(--gold-warm);} .dots i:nth-child(3){background:#9bc4a0;}
+  .url { flex:1; font-family:var(--f-mono); font-size:12px; color:var(--text-muted); background:var(--white); border:0.5px solid var(--border); border-radius:6px; padding:5px 12px; }
+  .app { padding:26px 28px; }
+  .app-h { font-family:var(--f-display); font-size:24px; color:var(--navy); }
+  .app-sub { font-size:13px; color:var(--gold-muted); margin-bottom:18px; }
+  .tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+  .tile { border:0.5px solid var(--border); border-radius:var(--radius); padding:13px 15px; }
+  .tile .lbl { font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--gold-muted); margin-bottom:5px; }
+  .tile .val { font-family:var(--f-display); font-size:18px; color:var(--navy); }
+  .tile .val.ok { color:var(--credit); font-size:15px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; border-bottom:0.5px solid var(--border); margin-bottom:16px; }
+  .tabx { font-size:13px; font-weight:500; color:var(--gold-muted); padding:8px 12px; border-bottom:2px solid transparent; }
+  .tabx.on { color:var(--navy); border-bottom-color:var(--gold); }
+  .coll { display:flex; align-items:center; gap:10px; padding:9px 2px; font-size:14px; color:var(--text); border-bottom:0.5px solid var(--border); }
+  .coll:last-of-type { border-bottom:none; }
+  .chk { width:16px; height:16px; border-radius:4px; border:1.5px solid var(--gold); display:inline-flex; align-items:center; justify-content:center; color:var(--gold); font-size:11px; flex:none; }
+  .chk.off { border-color:var(--border-heavy); color:transparent; }
+  .coll .ct { margin-left:auto; font-family:var(--f-mono); font-size:12px; color:var(--text-muted); }
+  .push-btn { margin-top:16px; text-align:center; background:var(--gold); color:var(--navy-deep); font-weight:700; font-size:13px; letter-spacing:.03em; padding:11px; border-radius:var(--radius); }
+
+  /* Terminal mockup */
+  .term { background:var(--navy-deep); border-radius:var(--radius-lg); overflow:hidden; border:0.5px solid var(--navy); }
+  .term-bar { display:flex; align-items:center; gap:8px; padding:11px 14px; background:rgba(255,255,255,.05); border-bottom:0.5px solid rgba(255,255,255,.08); }
+  .term-bar .ttl { font-family:var(--f-mono); font-size:12px; color:var(--gold-warm); margin-left:6px; }
+  .term-body { padding:20px 22px; font-family:var(--f-mono); font-size:13.5px; line-height:1.85; color:#dfe7f0; overflow-x:auto; }
+  .term-body .c { color:var(--gold-warm); }
+  .term-body .p { color:var(--gold); }            /* prompt $ */
+  .term-body .cmd { color:#eaf1f8; }
+  .term-body .ok { color:#8fd0a8; }
+
+  /* Steps */
+  .steps { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:28px; }
+  .scard { background:var(--white); border:0.5px solid var(--border); border-radius:var(--radius-lg); padding:22px 24px; display:flex; gap:16px; }
+  .scard .n { flex:none; width:32px; height:32px; border-radius:50%; background:var(--navy); color:var(--cream); font-family:var(--f-mono); font-size:14px; display:flex; align-items:center; justify-content:center; }
+  .scard h3 { font-size:18px; margin-bottom:5px; }
+  .scard p { font-size:14px; color:var(--text-muted); margin:0; }
+
+  /* Need list */
+  .need { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:32px; }
+  .need .n { background:var(--paper); border:0.5px solid var(--border); border-radius:var(--radius); padding:16px; }
+  .need .n .k { font-size:13px; font-weight:600; color:var(--navy); margin-bottom:3px; }
+  .need .n .v { font-size:13px; color:var(--text-muted); }
+
+  /* Callout */
+  .callout { background:var(--paper); border:0.5px solid var(--border-heavy); border-left:4px solid var(--gold); border-radius:var(--radius-lg); padding:28px 30px; }
+  .callout h3 { font-size:22px; margin-bottom:10px; }
+  .callout ul { margin:0; padding-left:20px; color:var(--text); }
+  .callout li { margin-bottom:8px; }
+  .callout li:last-child { margin-bottom:0; }
+
+  /* Who for */
+  .who { display:flex; flex-wrap:wrap; gap:10px; }
+  .pill { background:var(--white); border:0.5px solid var(--border); border-radius:30px; padding:8px 18px; font-size:14px; color:var(--navy); font-weight:500; }
+
+  /* CTA band */
+  .ctaband { background:var(--navy); border-radius:var(--radius-lg); padding:44px 40px; color:var(--gold-cream); margin:8px 0; }
+  .ctaband h2 { color:var(--cream); font-size:30px; margin-bottom:10px; }
+  .ctaband p { color:var(--gold-warm); font-size:16px; max-width:54ch; margin-bottom:22px; }
+  .ctaband .cta-row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .ctaband .secondary { font-size:14px; color:var(--gold-warm); }
+  .ctaband .secondary a { color:var(--gold-warm); border-bottom:1px solid rgba(232,213,160,.4); }
+  .ctaband .secondary a:hover { color:#fff; }
+
+  footer { padding:36px 0 48px; border-top:0.5px solid var(--border-heavy); font-size:13.5px; color:var(--text-muted); }
+  footer a { color:var(--blue); }
+
+  @media (max-width:760px) {
+    .hero h1 { font-size:42px; }
+    .features, .steps { grid-template-columns:1fr; }
+    .flow { grid-template-columns:1fr; }
+    .flow-arrows { flex-direction:row; }
+    .need { grid-template-columns:repeat(2,1fr); }
+    .tiles { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <div class="brand">Cite<span class="dot">Bridge</span></div>
+    <div class="nav-right">
+      <a class="lnk" href="#how">How it works</a>
+      <a class="lnk" href="#deploy">Set it up</a>
+      <!-- TODO: replace with your direct Calendly link -->
+      <a class="btn btn-gold" href="https://www.vossaiconsulting.com/pages/labs.html">Request Setup</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <span class="tag">Voss AI Consulting · Labs</span>
+    <h1>Cite<span class="dot">Bridge</span></h1>
+    <p class="lede">Zotero meets AI-powered analysis.</p>
+    <p class="body">The first bidirectional connector between your Zotero reference manager and Google NotebookLM. Push your collections in, pull AI insights back — your research library and your notebooks, finally in sync.</p>
+    <div class="cta-row">
+      <!-- TODO: replace with your direct Calendly link -->
+      <a class="btn btn-gold" href="https://www.vossaiconsulting.com/pages/labs.html">Request Setup</a>
+      <a class="btn btn-outline" href="https://github.com/RobVoss-AI/Citebridge/blob/main/docs/SETUP_GUIDE.md">Read the setup guide</a>
+    </div>
+    <p class="meta">Runs <span>locally on your machine</span> · macOS, Windows &amp; Linux · about a 15-minute setup</p>
+  </div>
+</header>
+
+<!-- HOW IT WORKS -->
+<section class="band" id="how">
+  <div class="wrap">
+    <span class="tag">How it works</span>
+    <h2 class="sec">One button, both directions</h2>
+    <p class="sec-lead">CiteBridge reads your Zotero collections, builds matching NotebookLM notebooks, and brings AI-generated insight back — without you copying a single file by hand.</p>
+
+    <div class="flow">
+      <div class="flow-box">
+        <h3>Zotero collection</h3>
+        <div class="item">paper-one.pdf</div>
+        <div class="item">paper-two.pdf</div>
+        <div class="item">paper-three.pdf</div>
+      </div>
+      <div class="flow-arrows">
+        <div class="arrow"><span>push</span><span class="line">─────►</span></div>
+        <div class="arrow"><span class="line">◄─────</span><span>insights</span></div>
+      </div>
+      <div class="flow-box">
+        <h3>NotebookLM notebook</h3>
+        <div class="item">paper-one (source)</div>
+        <div class="item">paper-two (source)</div>
+        <div class="item">AI notes &amp; summaries</div>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="fcard"><div class="ic">📤</div><h3>Push to NotebookLM</h3><p>Send whole Zotero collections to NotebookLM as organized notebooks, with each PDF uploaded as a source — automatically.</p></div>
+      <div class="fcard"><div class="ic">🔁</div><h3>Pull AI insights back</h3><p>Bring NotebookLM's AI-generated notes into Zotero, attached to the right items and tagged so you can find them.</p></div>
+      <div class="fcard"><div class="ic">📥</div><h3>Import &amp; preserve sources</h3><p>Pull NotebookLM sources into Zotero as proper library items — with original URLs, correct item types, and the full extracted text.</p></div>
+      <div class="fcard"><div class="ic">🧠</div><h3>Smart, incremental sync</h3><p>Tracks what's already synced and only handles new or changed items. It never deletes or alters your existing Zotero data.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- APP PREVIEW -->
+<section class="band">
+  <div class="wrap">
+    <span class="tag">The dashboard</span>
+    <h2 class="sec">A simple control panel — no spreadsheets, no scripts to babysit</h2>
+    <p class="sec-lead">Once it's running, everything happens from one local page in your browser. Pick collections, click sync, watch the progress.</p>
+
+    <div class="browser">
+      <div class="browser-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="url">localhost:8501  —  CiteBridge</span>
+      </div>
+      <div class="app">
+        <div class="app-h">🔗 CiteBridge</div>
+        <div class="app-sub">Bidirectional Zotero ↔ NotebookLM Sync</div>
+        <div class="tiles">
+          <div class="tile"><div class="lbl">Zotero</div><div class="val ok">✅ Connected</div></div>
+          <div class="tile"><div class="lbl">NotebookLM</div><div class="val ok">✅ Connected</div></div>
+          <div class="tile"><div class="lbl">Items synced</div><div class="val">128</div></div>
+        </div>
+        <div class="tabs">
+          <span class="tabx on">📤 Push to NotebookLM</span>
+          <span class="tabx">📥 Import Sources</span>
+          <span class="tabx">💾 Download Files</span>
+          <span class="tabx">📋 History</span>
+        </div>
+        <div class="coll"><span class="chk">✓</span> AI Ethics &amp; Policy <span class="ct">24 items</span></div>
+        <div class="coll"><span class="chk">✓</span> Dissertation — Chapter 3 <span class="ct">61 items</span></div>
+        <div class="coll"><span class="chk off"></span> Methods &amp; Stats <span class="ct">18 items</span></div>
+        <div class="coll"><span class="chk off"></span> To Read (2026) <span class="ct">42 items</span></div>
+        <div class="push-btn">📤 PUSH TO NOTEBOOKLM</div>
+      </div>
+    </div>
+    <p style="font-size:12.5px; color:var(--text-muted); margin-top:12px;">Illustrative preview of the CiteBridge interface.</p>
+  </div>
+</section>
+
+<!-- DEPLOY LOCALLY -->
+<section class="band" id="deploy">
+  <div class="wrap">
+    <span class="tag">Get it running</span>
+    <h2 class="sec">Deploy it locally in about 15 minutes</h2>
+    <p class="sec-lead">CiteBridge runs on your own computer. Here's the whole thing — the full walkthrough and a troubleshooting section live in the setup guide.</p>
+
+    <div class="need">
+      <div class="n"><div class="k">Python 3.10+</div><div class="v">A free download from python.org.</div></div>
+      <div class="n"><div class="k">Zotero</div><div class="v">The desktop app, with a collection or two.</div></div>
+      <div class="n"><div class="k">Google account</div><div class="v">With access to NotebookLM.</div></div>
+      <div class="n"><div class="k">~15 minutes</div><div class="v">One-time setup, then it just runs.</div></div>
+    </div>
+
+    <div class="term">
+      <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">Terminal — CiteBridge setup</span></div>
+      <div class="term-body"><span class="c"># 1 · Get the code</span>
+<span class="p">$</span> <span class="cmd">git clone https://github.com/RobVoss-AI/Citebridge.git</span>
+<span class="p">$</span> <span class="cmd">cd Citebridge</span>
+
+<span class="c"># 2 · One command installs everything &amp; walks you through Google sign-in</span>
+<span class="p">$</span> <span class="cmd">./setup.sh</span>          <span class="c"># macOS / Linux  ·  double-click setup.bat on Windows</span>
+<span class="ok">  ✓ environment ready · browser installed · NotebookLM login complete</span>
+
+<span class="c"># 3 · Launch the app</span>
+<span class="p">$</span> <span class="cmd">streamlit run app.py</span>
+<span class="ok">  ✓ open http://localhost:8501 in your browser</span></div>
+    </div>
+
+    <div class="steps">
+      <div class="scard"><div class="n">1</div><div><h3>Get the code</h3><p>Clone the repo (or download the ZIP from GitHub) and open the folder in a terminal.</p></div></div>
+      <div class="scard"><div class="n">2</div><div><h3>Run the setup script</h3><p><code>./setup.sh</code> (or <code>setup.bat</code> on Windows) installs everything — including the browser engine — then opens Google sign-in for NotebookLM.</p></div></div>
+      <div class="scard"><div class="n">3</div><div><h3>Get your Zotero API key</h3><p>Create a free key at zotero.org/settings/keys (allow library + write access) and note your Library ID. Paste both into the app's sidebar.</p></div></div>
+      <div class="scard"><div class="n">4</div><div><h3>Connect &amp; sync</h3><p>Launch with <code>streamlit run app.py</code>, verify both connections in the sidebar, pick your collections, and click <strong>Push</strong>.</p></div></div>
+    </div>
+
+    <p style="margin-top:26px;">
+      <a class="btn btn-primary" href="https://github.com/RobVoss-AI/Citebridge/blob/main/docs/SETUP_GUIDE.md">Full setup &amp; troubleshooting guide →</a>
+      <a class="btn btn-outline" href="https://github.com/RobVoss-AI/Citebridge" style="margin-left:8px;">View on GitHub</a>
+    </p>
+  </div>
+</section>
+
+<!-- WHY LOCAL -->
+<section class="band">
+  <div class="wrap">
+    <div class="callout">
+      <span class="tag" style="display:block; margin-bottom:8px;">Privacy by design</span>
+      <h3>Why CiteBridge runs on your computer</h3>
+      <p style="color:var(--text-muted);">CiteBridge is a personal tool, not a shared cloud service — and that's deliberate:</p>
+      <ul>
+        <li><strong>Your accounts stay yours.</strong> It uses <em>your</em> NotebookLM sign-in and <em>your</em> Zotero key, on your machine. Credentials never travel to anyone else's server.</li>
+        <li><strong>Your library is never at risk.</strong> CiteBridge only reads from Zotero unless you turn on note sync-back — and even then it only <em>adds</em> notes.</li>
+        <li><strong>The NotebookLM link refreshes periodically.</strong> Google sign-ins expire every few weeks; a quick re-login (about 30 seconds) restores it. We cover exactly how in the guide.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- WHO FOR -->
+<section class="band">
+  <div class="wrap">
+    <span class="tag">Who it's for</span>
+    <h2 class="sec">Built for serious readers</h2>
+    <p class="sec-lead">If you keep your sources in Zotero and want NotebookLM's AI to work across them, CiteBridge closes the gap.</p>
+    <div class="who">
+      <span class="pill">Researchers</span>
+      <span class="pill">Graduate students</span>
+      <span class="pill">Academics &amp; faculty</span>
+      <span class="pill">Literature reviewers</span>
+      <span class="pill">Grant writers</span>
+      <span class="pill">Anyone with a large Zotero library</span>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="band">
+  <div class="wrap">
+    <div class="ctaband">
+      <h2>Want it set up for you?</h2>
+      <p>Book a short session and we'll get CiteBridge running on your machine, connect your accounts, and walk you through the workflow end to end.</p>
+      <div class="cta-row">
+        <!-- TODO: replace with your direct Calendly link -->
+        <a class="btn btn-gold" href="https://www.vossaiconsulting.com/pages/labs.html">Request Setup</a>
+        <span class="secondary">Prefer to do it yourself? <a href="https://github.com/RobVoss-AI/Citebridge/blob/main/docs/SETUP_GUIDE.md">Setup guide</a> · <a href="https://github.com/RobVoss-AI/Citebridge">GitHub repo</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Built by <a href="https://www.vossaiconsulting.com">Voss AI Consulting</a> ·
+    Custom AI integrations for business, education &amp; finance ·
+    <a href="https://www.robvoss.com">robvoss.com</a>
+    <br><span style="font-size:12px;">CiteBridge is an independent tool and is not affiliated with or endorsed by Zotero or Google.</span>
+  </div>
+</footer>
+
+</body>
+</html>
