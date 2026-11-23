@@ -1,22 +1,26 @@
 @echo off
 REM ============================================
-REM CiteBridge — Quick Setup Script (Windows)
+REM CiteBridge v2 — Setup (Windows)
+REM Zotero ^<-^> Gemini Notebook (formerly NotebookLM)
 REM ============================================
-REM Usage: Double-click this file, or run: setup.bat
-REM ============================================
+setlocal
 
 echo.
 echo ========================================
 echo   CiteBridge Setup
-echo   Zotero ^<-^> NotebookLM Sync
+echo   Zotero ^<-^> Gemini Notebook
 echo ========================================
 echo.
 
-REM Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python 3 is required but not installed.
-    echo Install it from https://www.python.org/downloads/
+    echo ERROR: Python 3.10+ is required. Install it from https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+if errorlevel 1 (
+    echo ERROR: Python 3.10 or newer is required.
     pause
     exit /b 1
 )
@@ -24,51 +28,39 @@ if errorlevel 1 (
 echo Creating virtual environment...
 python -m venv .venv
 call .venv\Scripts\activate.bat
-echo Virtual environment created.
-
-echo.
-echo Installing dependencies...
-pip install --upgrade pip -q
+python -m pip install --upgrade pip -q
 pip install -r requirements.txt -q
 echo Dependencies installed.
 
+if "%CITEBRIDGE_HOME%"=="" set "CITEBRIDGE_HOME=%USERPROFILE%\.citebridge"
+if not exist "%CITEBRIDGE_HOME%" mkdir "%CITEBRIDGE_HOME%"
+if exist "%CITEBRIDGE_HOME%\oauth_client.json" (
+    echo Google sign-in file already in place.
+) else if exist "oauth_client.json" (
+    copy /Y "oauth_client.json" "%CITEBRIDGE_HOME%\oauth_client.json" >nul
+    echo Google sign-in file installed.
+) else (
+    echo WARNING: No oauth_client.json found. Copy the one from your CiteBridge download to:
+    echo     %CITEBRIDGE_HOME%\oauth_client.json
+)
+
 echo.
-echo Installing the Chromium browser for NotebookLM login (one-time download)...
-playwright install chromium
-echo Browser ready.
+set /p EXP="Install the EXPERIMENTAL notes/text read-back add-on? [y/N] "
+if /I "%EXP%"=="y" (
+    pip install -r requirements-experimental.txt -q
+    playwright install chromium
+    echo A browser will open. Sign in to Google, wait for Gemini Notebook to load,
+    echo then come back here and press Enter.
+    notebooklm login
+)
 
 echo.
 echo ========================================
-echo   Step 1: NotebookLM Authentication
+echo   Setup complete!
 echo ========================================
-echo.
-echo This will open a browser window for Google sign-in.
-echo After signing in, return to this terminal and press Enter.
-echo.
-pause
-notebooklm login
-
-echo.
-echo ========================================
-echo   Step 2: Zotero API Key
-echo ========================================
-echo.
-echo Get your API key at: https://www.zotero.org/settings/keys
-echo 1. Click 'Create new private key'
-echo 2. Name it 'CiteBridge'
-echo 3. Check 'Allow library access' (read + write)
-echo 4. Save the key
-echo.
-
-echo.
-echo ========================================
-echo   Setup Complete!
-echo ========================================
-echo.
-echo To start CiteBridge:
-echo   1. .venv\Scripts\activate
-echo   2. streamlit run app.py
-echo   3. Enter your Zotero credentials in the sidebar
-echo   4. Select collections and click SYNC NOW!
+echo Start CiteBridge any time with:
+echo     .venv\Scripts\activate
+echo     streamlit run app.py
+echo Then click "Sign in with Google" and pick your Zotero collections.
 echo.
 pause

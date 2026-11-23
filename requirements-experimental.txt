@@ -1,0 +1,8 @@
+# OPTIONAL: experimental read-back (notes & source text) from Gemini Notebook.
+# Uses the unofficial notebooklm-py library, which signs in with browser cookies
+# (`notebooklm login`) that expire every few weeks. Pinned to the version
+# CiteBridge's adapter was tested against; upgrade deliberately.
+#   pip install -r requirements-experimental.txt
+#   playwright install chromium
+#   notebooklm login
+notebooklm-py[browser]==0.8.6

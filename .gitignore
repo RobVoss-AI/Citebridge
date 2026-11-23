@@ -35,3 +35,14 @@ config.yaml
 
 # Zip builds
 *.zip
+
+# Google OAuth client for CiteBridge — distributed with releases, never committed
+oauth_client.json
+citebridge/oauth_client.json
+client_secret*.json
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Test / tool caches
+.pytest_cache/

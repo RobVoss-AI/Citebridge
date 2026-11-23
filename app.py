@@ -1,659 +1,355 @@
 """
-CiteBridge — Streamlit GUI
-One-button bidirectional sync between Zotero and NotebookLM.
+CiteBridge v2 — Zotero ↔ Gemini Notebook (formerly NotebookLM).
 
 Run with:  streamlit run app.py
 """
 
-import streamlit as st
+from __future__ import annotations
+
 import logging
 import sys
-import os
 from pathlib import Path
 
-# Add project to path
-sys.path.insert(0, str(Path(__file__).parent))
+import streamlit as st
 
-from config import AppConfig
-from sync_engine import SyncEngine
-from state_db import SyncStateDB
-from notebooklm_client import NotebookLMClient
-from zotero_client import ZoteroClient
-from utils import setup_logging, get_zotero_storage_path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # however the app is launched
 
-setup_logging()
+from citebridge import __version__  # noqa: E402
+from citebridge.config import TIER_LIMITS, AppConfig, citebridge_home  # noqa: E402
+from citebridge.notebook import auth  # noqa: E402
+from citebridge.notebook.experimental import ExperimentalReader  # noqa: E402
+from citebridge.notebook.official import ApiError, OfficialNotebookClient  # noqa: E402
+from citebridge.state import SyncState  # noqa: E402
+from citebridge.sync import reverse  # noqa: E402
+from citebridge.sync.executor import SyncEngine  # noqa: E402
+from citebridge.zotero.client import ZoteroLibrary, ZoteroUnavailable, detect_storage_path  # noqa: E402
 
-# ── Page Config ──
-st.set_page_config(
-    page_title="CiteBridge",
-    page_icon="🔗",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-# ── Custom CSS ──
+st.set_page_config(page_title="CiteBridge", page_icon="📚", layout="wide")
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0;
-    }
-    .sub-header {
-        color: #888;
-        font-size: 1.1rem;
-        margin-top: -10px;
-        margin-bottom: 20px;
-    }
-    .status-card {
-        background: #f8f9fa;
-        border-radius: 10px;
-        padding: 15px 20px;
-        margin: 5px 0;
-        border-left: 4px solid #667eea;
-    }
-    .sync-btn {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .stButton > button {
-        width: 100%;
-    }
-</style>
-""", unsafe_allow_html=True)
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+h1, h2, h3 { font-family: 'DM Serif Display', serif !important; font-weight: 400 !important; }
+.cb-title { font-family: 'DM Serif Display', serif; font-size: 2.4rem; margin: 0; color: #1a1a2e; }
+.cb-title span { color: #c0392b; }
+.cb-sub { color: #8a8578; margin-top: -4px; }
+</style>""", unsafe_allow_html=True)
+
+ss = st.session_state
+if "cfg" not in ss:
+    ss.cfg = AppConfig.load()
+cfg: AppConfig = ss.cfg
 
 
-# ── Session State Init ──
-if "config" not in st.session_state:
-    st.session_state.config = AppConfig.load()
-if "sync_log" not in st.session_state:
-    st.session_state.sync_log = []
-if "is_syncing" not in st.session_state:
-    st.session_state.is_syncing = False
-if "zotero_connected" not in st.session_state:
-    st.session_state.zotero_connected = False
-if "nlm_connected" not in st.session_state:
-    st.session_state.nlm_connected = False
+def save():
+    cfg.save()
 
 
-def add_log(msg: str):
-    """Add a message to the sync log."""
-    st.session_state.sync_log.append(msg)
+def friendly(e: Exception) -> str:
+    return str(e) if isinstance(e, (ApiError, auth.AuthError, ZoteroUnavailable)) else f"{type(e).__name__}: {e}"
 
 
-# ══════════════════════════════════════════
-# SIDEBAR — Settings & Authentication
-# ══════════════════════════════════════════
+# ── objects for the current account ──
+
+account = cfg.google.account if cfg.google.account in auth.signed_in_accounts() else ""
+state = SyncState(account=account)
+zot = ZoteroLibrary(cfg.zotero)
+
+
+def writer() -> OfficialNotebookClient:
+    return OfficialNotebookClient(auth.token_provider(account), quota_project=cfg.google.quota_project)
+
+
+def engine(progress=None) -> SyncEngine:
+    return SyncEngine(cfg, writer(), zot, state, progress)
+
+
+def reader():
+    if not cfg.experimental.enabled:
+        return None
+    ok, _ = ExperimentalReader.available(cfg.experimental.storage_path)
+    return ExperimentalReader(cfg.experimental.storage_path) if ok else None
+
+
+# ══════════════════ SIDEBAR ══════════════════
 
 with st.sidebar:
-    st.markdown("## ⚙️ Settings")
-
-    # ── Zotero Settings ──
-    with st.expander("🔶 Zotero Connection", expanded=not st.session_state.config.is_zotero_configured()):
-        st.markdown(
-            "Get your API key and Library ID from "
-            "[zotero.org/settings/keys](https://www.zotero.org/settings/keys)"
-        )
-        api_key = st.text_input(
-            "API Key",
-            value=st.session_state.config.zotero.api_key,
-            type="password",
-            key="zotero_api_key",
-        )
-        library_id = st.text_input(
-            "Library ID (your user ID number)",
-            value=st.session_state.config.zotero.library_id,
-            key="zotero_library_id",
-        )
-        library_type = st.selectbox(
-            "Library Type",
-            ["user", "group"],
-            index=0 if st.session_state.config.zotero.library_type == "user" else 1,
-            key="zotero_library_type",
-        )
-
-        # Auto-detect Zotero storage
-        auto_storage = get_zotero_storage_path()
-        storage_path = st.text_input(
-            "Local Storage Path (optional, for faster PDF access)",
-            value=st.session_state.config.zotero.local_storage_path or auto_storage,
-            key="zotero_storage_path",
-            help="Path to your Zotero/storage/ directory",
-        )
-
-        if st.button("💾 Save & Test Zotero", key="save_zotero"):
-            st.session_state.config.zotero.api_key = api_key
-            st.session_state.config.zotero.library_id = library_id
-            st.session_state.config.zotero.library_type = library_type
-            st.session_state.config.zotero.local_storage_path = storage_path
-            st.session_state.config.save()
-
-            # Test connection
-            try:
-                zot = ZoteroClient(library_id, api_key, library_type, storage_path)
-                if zot.test_connection():
-                    st.success("✅ Zotero connected!")
-                    st.session_state.zotero_connected = True
-                else:
-                    st.error("❌ Connection failed — check your API key and Library ID")
-                    st.session_state.zotero_connected = False
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
-                st.session_state.zotero_connected = False
-
-    # ── NotebookLM Settings ──
-    with st.expander("🟣 NotebookLM Connection", expanded=not NotebookLMClient.is_authenticated()):
-        st.markdown(
-            "NotebookLM authentication uses your Google account cookies.\n\n"
-            "**Option A — Local usage:** Run `notebooklm login` in your terminal.\n\n"
-            "**Option B — Streamlit Cloud:** Add `NOTEBOOKLM_AUTH_JSON` to your "
-            "[app secrets](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management) "
-            "with the contents of `~/.notebooklm/storage_state.json`."
-        )
-
-        # Auth diagnostics
-        _has_env = bool(os.environ.get("NOTEBOOKLM_AUTH_JSON", "").strip())
-        _has_st_secret = False
-        try:
-            _secret = st.secrets.get("NOTEBOOKLM_AUTH_JSON", "")
-            _has_st_secret = bool(_secret and str(_secret).strip())
-        except Exception:
-            pass
-        _has_file = False
-        try:
-            from notebooklm.paths import get_storage_path as _gsp
-            _has_file = _gsp().exists()
-        except Exception:
-            pass
-
-        st.caption(
-            f"Auth sources: env var {'✅' if _has_env else '❌'} · "
-            f"Streamlit secret {'✅' if _has_st_secret else '❌'} · "
-            f"local file {'✅' if _has_file else '❌'}"
-        )
-
-        nlm_storage = st.text_input(
-            "Auth Storage Path (leave blank for default)",
-            value=st.session_state.config.notebooklm.storage_path,
-            key="nlm_storage_path",
-            help="Default: ~/.notebooklm/storage_state.json",
-        )
-
-        if st.button("🔗 Verify NotebookLM Connection", key="verify_nlm"):
-            st.session_state.config.notebooklm.storage_path = nlm_storage
-            st.session_state.config.save()
-
-            try:
-                nlm = NotebookLMClient(nlm_storage or None)
-                if nlm.test_connection():
-                    st.success("✅ NotebookLM connected!")
-                    st.session_state.nlm_connected = True
-                else:
-                    st.error("❌ Not authenticated — check auth sources above")
-                    st.session_state.nlm_connected = False
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
-                st.session_state.nlm_connected = False
-
-    # ── Sync Settings ──
-    with st.expander("🔄 Sync Options"):
-        sync_notes_back = st.checkbox(
-            "Sync NotebookLM notes back to Zotero",
-            value=st.session_state.config.sync.sync_notes_back,
-            key="sync_notes_back",
-        )
-        max_file_size = st.slider(
-            "Max file size (MB)",
-            min_value=10, max_value=500, step=10,
-            value=st.session_state.config.sync.max_file_size_mb,
-            key="max_file_size",
-        )
-
-        if st.button("💾 Save Sync Settings", key="save_sync"):
-            st.session_state.config.sync.sync_notes_back = sync_notes_back
-            st.session_state.config.sync.max_file_size_mb = max_file_size
-            st.session_state.config.save()
-            st.success("Settings saved!")
-
-
-# ══════════════════════════════════════════
-# MAIN AREA
-# ══════════════════════════════════════════
-
-st.markdown('<p class="main-header">🔗 CiteBridge</p>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="sub-header">Bidirectional Zotero ↔ NotebookLM Sync</p>',
-    unsafe_allow_html=True,
-)
-
-# ── Connection Status ──
-col1, col2, col3 = st.columns(3)
-with col1:
-    zotero_ok = st.session_state.config.is_zotero_configured()
-    st.metric("Zotero", "✅ Connected" if zotero_ok else "❌ Not configured")
-with col2:
-    # "Authed" = credentials are present (file / env var / Streamlit secret).
-    # "Verified" = a real API call succeeded this session. File presence alone
-    # does NOT mean the connection works — Google tokens expire periodically,
-    # so we never report "Connected" until a live check has passed.
-    nlm_authed = NotebookLMClient.is_authenticated()
-    nlm_verified = st.session_state.get("nlm_connected", False)
-    if nlm_verified:
-        nlm_status = "✅ Connected"
-    elif nlm_authed:
-        nlm_status = "🔑 Verify needed"
+    st.markdown("### Google account")
+    if not auth.has_client_config():
+        st.warning("CiteBridge's Google sign-in file is missing. Put `oauth_client.json` in "
+                   f"`{citebridge_home()}` (it comes with your CiteBridge download).")
     else:
-        nlm_status = "❌ Not authenticated"
-    st.metric("NotebookLM", nlm_status)
-with col3:
-    db = SyncStateDB()
-    stats = db.get_sync_stats()
-    st.metric("Items Synced", stats["items_synced"])
+        accounts = auth.signed_in_accounts()
+        if accounts:
+            choice = st.selectbox("Signed in as", accounts,
+                                  index=accounts.index(account) if account in accounts else 0)
+            if choice != cfg.google.account:
+                cfg.google.account = choice
+                save()
+                st.rerun()
+        c1, c2 = st.columns(2)
+        if c1.button("Sign in with Google", use_container_width=True,
+                     type="primary" if not accounts else "secondary"):
+            with st.spinner("Finish signing in in the browser tab that just opened…"):
+                try:
+                    cfg.google.account = auth.sign_in()
+                    save()
+                    st.rerun()
+                except Exception as e:
+                    st.error(friendly(e))
+        if accounts and c2.button("Sign out", use_container_width=True):
+            auth.sign_out(account)
+            cfg.google.account = ""
+            save()
+            st.rerun()
+        st.caption("Use a personal Google account — work/school accounts aren't supported by "
+                   "Gemini Notebook's API yet.")
+
+    with st.expander("Zotero", expanded=not cfg.is_zotero_readable()):
+        cfg.zotero.use_local_api = st.checkbox(
+            "Read from Zotero desktop when it's running", value=cfg.zotero.use_local_api,
+            help="Zotero 7: Settings → Advanced → allow other applications on this computer to "
+                 "communicate with Zotero. No API key needed to send to Gemini Notebook.")
+        cfg.zotero.api_key = st.text_input("API key (needed to bring things back into Zotero)",
+                                           cfg.zotero.api_key, type="password")
+        cfg.zotero.library_id = st.text_input("Library ID (your numeric user ID)", cfg.zotero.library_id)
+        cfg.zotero.library_type = st.selectbox("Library type", ["user", "group"],
+                                               index=0 if cfg.zotero.library_type == "user" else 1)
+        cfg.zotero.local_storage_path = st.text_input(
+            "Zotero storage folder (optional fallback)",
+            cfg.zotero.local_storage_path or detect_storage_path())
+        if st.button("Save & test Zotero"):
+            save()
+            ok, msg = ZoteroLibrary(cfg.zotero).test_connection()
+            (st.success if ok else st.error)(msg)
+
+    with st.expander("Sync settings"):
+        tiers = list(TIER_LIMITS)
+        cfg.sync.plan_tier = st.selectbox(
+            "Your Gemini Notebook plan", tiers, index=tiers.index(cfg.sync.plan_tier),
+            format_func=lambda t: f"{t.title()} — up to {TIER_LIMITS[t][1]} sources per notebook",
+            help="Big collections are split across several notebooks to fit this limit.")
+        cfg.sync.include_bibliography = st.checkbox(
+            "Add a Bibliography source to each notebook", cfg.sync.include_bibliography,
+            help="Lists every item with author-year, DOI and Zotero key, so Gemini cites accurately.")
+        cfg.sync.include_annotations = st.checkbox(
+            "Add my highlights & notes", cfg.sync.include_annotations)
+        cfg.sync.cite_items_without_pdf = st.checkbox(
+            "Include items without a PDF (web page or citation card)", cfg.sync.cite_items_without_pdf)
+        if st.button("Save settings"):
+            save()
+            st.success("Saved")
+
+    with st.expander("🧪 Experimental: read notes & text back"):
+        st.caption("Gemini Notebook's official API can't read notes or source text yet. This "
+                   "optional add-on uses an unofficial library and its own browser login, which "
+                   "expires every few weeks.")
+        cfg.experimental.enabled = st.checkbox("Enable", cfg.experimental.enabled)
+        if cfg.experimental.enabled:
+            ok, msg = ExperimentalReader.available(cfg.experimental.storage_path)
+            (st.success if ok else st.warning)(msg)
+            if ok and st.button("Check experimental login"):
+                good, m = ExperimentalReader(cfg.experimental.storage_path).check()
+                (st.success if good else st.error)(m)
+        if st.button("Save", key="save_exp"):
+            save()
+
+
+# ══════════════════ MAIN ══════════════════
+
+st.markdown('<p class="cb-title">Cite<span>Bridge</span></p>', unsafe_allow_html=True)
+st.markdown('<p class="cb-sub">Zotero ↔ Gemini Notebook (formerly NotebookLM)</p>', unsafe_allow_html=True)
+
+stats = state.stats() if account else {}
+m = st.columns(5)
+m[0].metric("Google", account.split("@")[0] if account else "Not signed in")
+m[1].metric("Notebooks", stats.get("notebooks", 0))
+m[2].metric("Sources", stats.get("sources", 0))
+m[3].metric("Processing / failed", f"{stats.get('processing', 0)} / {stats.get('failed', 0)}")
+m[4].metric("To clean up", stats.get("orphans", 0))
+
+if not account:
+    st.info("👈 Sign in with Google to get started.")
+    st.stop()
+if not cfg.is_zotero_readable():
+    st.info("👈 Connect Zotero: open Zotero desktop, or add your API key.")
+    st.stop()
+
+if not ss.get("adopted"):
+    try:
+        adopted = engine().adopt_legacy()
+        if adopted:
+            st.success(f"Linked your existing notebooks from CiteBridge v1: {', '.join(adopted)}")
+    except Exception as e:
+        logging.warning(f"Legacy adoption skipped: {e}")
+    ss.adopted = True
+
+tab_send, tab_proc, tab_clean, tab_back, tab_dl, tab_hist = st.tabs([
+    "📤 Send to Gemini Notebook", "⏳ Processing", "🧹 Cleanup",
+    "📥 Bring back to Zotero", "💾 Download originals", "📋 History"])
+
+# ── Send ──
+with tab_send:
+    try:
+        collections = sorted(zot.collections(), key=lambda c: c.name.lower())
+    except Exception as e:
+        st.error(friendly(e))
+        collections = []
+    if collections:
+        st.caption(f"Reading from {zot.read_mode_label}.")
+        chosen = set(cfg.sync.enabled_collections)
+        picked = []
+        cols = st.columns(2)
+        for i, c in enumerate(collections):
+            if cols[i % 2].checkbox(f"**{c.name}** ({c.num_items} items)", c.key in chosen, key=f"c_{c.key}"):
+                picked.append(c)
+
+        if st.button("Preview what will be sent", disabled=not picked):
+            cfg.sync.enabled_collections = [c.key for c in picked]
+            save()
+            ss.plans = []
+            ss.plans_account = account
+            with st.status("Planning…", expanded=True) as status:
+                eng = engine(lambda msg: status.write(msg))
+                for c in picked:
+                    try:
+                        ss.plans.append(eng.plan(c.key, c.name))
+                    except Exception as e:
+                        st.error(f"{c.name}: {friendly(e)}")
+                status.update(label="Plan ready", state="complete")
+
+        if ss.get("plans_account") != account:   # plans belong to the account that made them
+            ss.plans = []
+        plans = ss.get("plans") or []
+        for p in plans:
+            with st.container(border=True):
+                st.markdown(f"**{p.collection_name}** — {p.summary()}")
+                if p.notebooks:
+                    st.caption("Notebooks: " + ", ".join(
+                        t.display_name + (" (new)" if t.existing is None else "")
+                        + (" (renamed)" if t.rename else "") for t in p.notebooks))
+                for w in p.warnings:
+                    st.warning(w)
+                if p.actions or p.skips:
+                    with st.expander("Details"):
+                        for a in p.actions:
+                            st.write(f"`{a.source_kind}` {a.display_name} — *{a.reason}*")
+                        for s in p.skips:
+                            st.write(f"⏭️ {s.title} — {s.reason}")
+        if plans and any(not p.is_noop for p in plans):
+            if st.button("📤 Send to Gemini Notebook", type="primary"):
+                ss.plans = []   # consume first: an interrupted run must not be re-sent stale
+                with st.status("Sending…", expanded=True) as status:
+                    eng = engine(lambda msg: status.write(msg))
+                    for p in plans:
+                        try:
+                            rep = eng.execute(p)
+                            (st.success if rep.ok else st.warning)(rep.summary())
+                            for f in rep.failed + rep.errors:
+                                st.error(f)
+                            for url in rep.notebooks:
+                                st.markdown(f"[Open in Gemini Notebook ↗]({url})")
+                        except Exception as e:
+                            st.error(f"{p.collection_name}: {friendly(e)}")
+                    status.update(label="Done", state="complete")
+        elif plans:
+            st.success("Everything selected is already up to date.")
+    else:
+        st.info("No Zotero collections found.")
+
+# ── Processing ──
+with tab_proc:
+    if st.button("Check status now"):
+        try:
+            n = engine().refresh_pending()
+            st.success(f"Updated {n} source(s).")
+        except Exception as e:
+            st.error(friendly(e))
+    from citebridge.notebook.base import explain_failure
+    pending, failed = state.pending_sources(), state.failed_sources()
+    st.markdown(f"**Still processing:** {len(pending)}")
+    for r in pending:
+        st.write(f"⏳ {r.display_name}")
+    st.markdown(f"**Failed:** {len(failed)}")
+    for r in failed:
+        st.write(f"❌ {r.display_name} — {explain_failure(r.error_code, r.error_message or '')}")
+
+# ── Cleanup ──
+with tab_clean:
+    st.caption("Gemini Notebook's API can't delete sources yet. These outdated sources still take "
+               "up space in your notebooks — delete them in Gemini Notebook, then mark them done "
+               "(CiteBridge also notices automatically on your next sync).")
+    orphans = state.orphans()
+    if not orphans:
+        st.success("Nothing to clean up.")
+    for o in orphans:
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(f"**{o.display_name}** — {o.reason} · [open notebook ↗]({o.notebook_url})")
+        if c2.button("Done", key=f"o_{o.source_name}"):
+            state.resolve_orphan(o.source_name)
+            st.rerun()
+
+# ── Bring back ──
+with tab_back:
+    synced = state.all_notebooks()
+    if not synced:
+        st.info("Send a collection first.")
+    elif not cfg.is_zotero_writable():
+        st.warning("Add your Zotero API key and library ID (sidebar → Zotero) to write into Zotero.")
+    else:
+        names = {c.key: c.name for c in collections}
+        rd = reader()
+        for nb in synced:
+            label = f"{names.get(nb.collection_key, nb.collection_key)} → {nb.display_name}"
+            with st.container(border=True):
+                st.markdown(f"**{label}**")
+                c1, c2 = st.columns(2)
+                if c1.button("Import sources I added in Gemini Notebook", key=f"i_{nb.notebook_name}"):
+                    with st.spinner("Importing…"):
+                        try:
+                            rep = reverse.import_new_sources(nb.notebook_name, nb.display_name,
+                                                             writer(), zot, state, rd)
+                            st.success(rep.summary())
+                        except Exception as e:
+                            st.error(friendly(e))
+                if rd is None:
+                    c2.caption("Pulling notes needs the 🧪 experimental add-on.")
+                elif c2.button("🧪 Pull notes into Zotero", key=f"n_{nb.notebook_name}"):
+                    with st.spinner("Pulling notes…"):
+                        try:
+                            rep = reverse.pull_notes(nb.collection_key, names.get(nb.collection_key, ""),
+                                                     rd, zot, state)
+                            st.success(rep.summary())
+                        except Exception as e:
+                            st.error(friendly(e))
+
+# ── Download ──
+with tab_dl:
+    st.caption("Saves the original web pages/files behind a notebook's web sources.")
+    if st.button("Load my notebooks"):
+        try:
+            ss.notebook_list = writer().list_notebooks()
+        except Exception as e:
+            st.error(friendly(e))
+    nbs = ss.get("notebook_list") or []
+    if nbs:
+        nb = st.selectbox("Notebook", nbs, format_func=lambda n: n.display_name)
+        out = st.text_input("Save to", str(Path.home() / "CiteBridge Downloads"))
+        if st.button("Download original files"):
+            with st.spinner("Downloading…"):
+                rep = reverse.download_originals(nb.name, nb.display_name, writer(), out)
+            st.success(f"{rep.imported} saved, {rep.skipped} skipped (uploaded files or YouTube).")
+            for e in rep.errors:
+                st.error(e)
+
+# ── History ──
+with tab_hist:
+    for ts, action, status, details in state.recent_logs(30):
+        icon = {"success": "✅", "partial": "⚠️"}.get(status, "❌")
+        st.markdown(f"{icon} **{action}** · {ts}  \n{details or ''}")
 
 st.divider()
-
-# ── Main Tabs ──
-if not zotero_ok:
-    st.warning(
-        "👈 Configure your Zotero API key in the sidebar to get started."
-    )
-elif not nlm_authed:
-    st.warning(
-        "👈 Authenticate with NotebookLM — run `notebooklm login` in your "
-        "terminal, then click **Verify NotebookLM Connection** in the sidebar."
-    )
-else:
-    if not nlm_verified:
-        st.info(
-            "🔑 NotebookLM credentials found but **not verified** this session. "
-            "Click **Verify NotebookLM Connection** in the sidebar before "
-            "syncing. NotebookLM tokens expire periodically — if verification "
-            "fails, re-run `notebooklm login` in your terminal."
-        )
-    tab_push, tab_import, tab_download, tab_history = st.tabs([
-        "📤 Push to NotebookLM",
-        "📥 Import Sources to Zotero",
-        "💾 Download Source Files",
-        "📋 Sync History",
-    ])
-
-    # ══════════════════════════════════════
-    # TAB 1: Zotero → NotebookLM
-    # ══════════════════════════════════════
-    with tab_push:
-        try:
-            zot = ZoteroClient(
-                st.session_state.config.zotero.library_id,
-                st.session_state.config.zotero.api_key,
-                st.session_state.config.zotero.library_type,
-                st.session_state.config.zotero.local_storage_path,
-            )
-            collections = zot.get_collections()
-
-            if not collections:
-                st.info("No collections found in your Zotero library.")
-            else:
-                st.markdown("### 📚 Select Zotero Collections to Push")
-                st.markdown(
-                    "Each selected collection becomes a NotebookLM notebook "
-                    "with all PDFs added as sources."
-                )
-
-                previously_selected = set(
-                    st.session_state.config.sync.enabled_collections
-                )
-
-                selected_keys = []
-                cols = st.columns(2)
-                for i, coll in enumerate(sorted(collections, key=lambda c: c.name)):
-                    with cols[i % 2]:
-                        checked = st.checkbox(
-                            f"📁 **{coll.name}** ({coll.num_items} items)",
-                            value=coll.key in previously_selected,
-                            key=f"coll_{coll.key}",
-                        )
-                        if checked:
-                            selected_keys.append(coll.key)
-
-                st.divider()
-
-                col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-                with col_btn2:
-                    sync_clicked = st.button(
-                        "📤 **PUSH TO NOTEBOOKLM**",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=len(selected_keys) == 0,
-                        key="sync_now",
-                    )
-
-                if len(selected_keys) == 0:
-                    st.caption("Select at least one collection to push.")
-
-                if sync_clicked and selected_keys:
-                    st.session_state.config.sync.enabled_collections = selected_keys
-                    st.session_state.config.save()
-                    st.session_state.sync_log = []
-
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    step_count = [0]
-                    total_steps = len(selected_keys) * 3
-
-                    def progress_callback_push(msg):
-                        step_count[0] += 1
-                        progress = min(step_count[0] / max(total_steps, 1), 0.99)
-                        progress_bar.progress(progress)
-                        status_text.markdown(f"**{msg}**")
-                        st.session_state.sync_log.append(msg)
-
-                    try:
-                        engine = SyncEngine(
-                            st.session_state.config,
-                            progress_callback=progress_callback_push,
-                        )
-                        result = engine.sync_all(selected_keys)
-                        progress_bar.progress(1.0)
-                        status_text.empty()
-
-                        if result.success:
-                            st.success(f"✅ Push complete!\n\n{result.summary()}")
-                        else:
-                            st.warning(
-                                f"⚠️ Push completed with errors:\n\n{result.summary()}"
-                            )
-                            for err in result.errors:
-                                st.error(err)
-                    except Exception as e:
-                        st.error(f"❌ Push failed: {e}")
-                        logging.exception("Push failed")
-
-        except Exception as e:
-            st.error(f"❌ Failed to load Zotero collections: {e}")
-            st.info("Check your Zotero API key and Library ID in the sidebar.")
-
-    # ══════════════════════════════════════
-    # TAB 2: NotebookLM → Zotero (SOURCES)
-    # ══════════════════════════════════════
-    with tab_import:
-        st.markdown("### 📥 Import NotebookLM Sources into Zotero")
-        st.markdown(
-            "Select notebooks below to pull their **raw sources** "
-            "(PDFs, web pages, videos, etc.) into your Zotero library. "
-            "Each notebook becomes a Zotero collection with proper "
-            "library items, URLs, and full extracted text."
-        )
-
-        try:
-            nlm = NotebookLMClient(
-                st.session_state.config.notebooklm.storage_path or None,
-            )
-            notebooks = nlm.list_notebooks(include_source_counts=True)
-
-            if not notebooks:
-                st.info("No notebooks found in NotebookLM.")
-            else:
-                selected_notebooks = []
-                cols = st.columns(2)
-
-                for i, nb in enumerate(sorted(notebooks, key=lambda n: n.title)):
-                    with cols[i % 2]:
-                        checked = st.checkbox(
-                            f"📓 **{nb.title}** ({nb.sources_count} sources)",
-                            key=f"nb_{nb.id}",
-                        )
-                        if checked:
-                            selected_notebooks.append(nb.id)
-
-                st.divider()
-
-                include_fulltext = st.checkbox(
-                    "Include full extracted text (slower but much more valuable)",
-                    value=True,
-                    key="include_fulltext",
-                    help="Fetches the complete text NotebookLM extracted from "
-                         "each source and saves it as a Zotero note. "
-                         "This is the main value — you get the full content "
-                         "even if the original source goes offline.",
-                )
-
-                col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-                with col_btn2:
-                    import_clicked = st.button(
-                        "📥 **IMPORT SOURCES TO ZOTERO**",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=len(selected_notebooks) == 0,
-                        key="import_now",
-                    )
-
-                if len(selected_notebooks) == 0:
-                    st.caption("Select at least one notebook to import.")
-
-                if import_clicked and selected_notebooks:
-                    st.session_state.sync_log = []
-
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    step_count = [0]
-                    total_steps = len(selected_notebooks) * 5
-
-                    def progress_callback_import(msg):
-                        step_count[0] += 1
-                        progress = min(step_count[0] / max(total_steps, 1), 0.99)
-                        progress_bar.progress(progress)
-                        status_text.markdown(f"**{msg}**")
-                        st.session_state.sync_log.append(msg)
-
-                    try:
-                        engine = SyncEngine(
-                            st.session_state.config,
-                            progress_callback=progress_callback_import,
-                        )
-                        result = engine.import_all_notebooks(
-                            selected_notebooks,
-                            include_fulltext=include_fulltext,
-                        )
-                        progress_bar.progress(1.0)
-                        status_text.empty()
-
-                        if result.success:
-                            st.success(
-                                f"✅ Import complete!\n\n{result.summary()}\n\n"
-                                f"Open Zotero to see your new collections "
-                                f"(prefixed with 'NLM:')."
-                            )
-                        else:
-                            st.warning(
-                                f"⚠️ Import completed with errors:\n\n"
-                                f"{result.summary()}"
-                            )
-                            for err in result.errors:
-                                st.error(err)
-                    except Exception as e:
-                        st.error(f"❌ Import failed: {e}")
-                        logging.exception("Import failed")
-
-        except Exception as e:
-            st.error(f"❌ Failed to load NotebookLM notebooks: {e}")
-            st.info(
-                "Make sure you've authenticated with NotebookLM. "
-                "Run `notebooklm login` in your terminal."
-            )
-
-    # ══════════════════════════════════════
-    # TAB 3: Download Source Files
-    # ══════════════════════════════════════
-    with tab_download:
-        st.markdown("### 💾 Download Source Files from NotebookLM")
-        st.markdown(
-            "Download the **original files** (PDFs, web pages, etc.) from "
-            "your NotebookLM notebooks to a local directory. "
-            "This is especially useful for sources added by NotebookLM's "
-            "research features that you don't have locally."
-        )
-
-        try:
-            nlm_dl = NotebookLMClient(
-                st.session_state.config.notebooklm.storage_path or None,
-            )
-            dl_notebooks = nlm_dl.list_notebooks(include_source_counts=True)
-
-            if not dl_notebooks:
-                st.info("No notebooks found in NotebookLM.")
-            else:
-                selected_dl_notebooks = []
-                dl_cols = st.columns(2)
-
-                for i, nb in enumerate(sorted(dl_notebooks, key=lambda n: n.title)):
-                    with dl_cols[i % 2]:
-                        checked = st.checkbox(
-                            f"📓 **{nb.title}** ({nb.sources_count} sources)",
-                            key=f"dl_{nb.id}",
-                        )
-                        if checked:
-                            selected_dl_notebooks.append(nb.id)
-
-                st.divider()
-
-                # Output directory selection
-                default_dir = str(Path.home() / "CiteBridge Downloads")
-                output_dir = st.text_input(
-                    "Download directory",
-                    value=default_dir,
-                    key="download_dir",
-                    help="Each notebook gets its own subdirectory inside this folder.",
-                )
-
-                dl_timeout = st.slider(
-                    "Download timeout per file (seconds)",
-                    min_value=10, max_value=120, value=30, step=5,
-                    key="dl_timeout",
-                    help="Increase this if downloads are timing out for large files.",
-                )
-
-                col_dl1, col_dl2, col_dl3 = st.columns([1, 2, 1])
-                with col_dl2:
-                    download_clicked = st.button(
-                        "💾 **DOWNLOAD SOURCE FILES**",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=len(selected_dl_notebooks) == 0,
-                        key="download_now",
-                    )
-
-                if len(selected_dl_notebooks) == 0:
-                    st.caption("Select at least one notebook to download from.")
-
-                if download_clicked and selected_dl_notebooks:
-                    st.session_state.sync_log = []
-
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    step_count = [0]
-                    total_steps = len(selected_dl_notebooks) * 5
-
-                    def progress_callback_download(msg):
-                        step_count[0] += 1
-                        progress = min(step_count[0] / max(total_steps, 1), 0.99)
-                        progress_bar.progress(progress)
-                        status_text.markdown(f"**{msg}**")
-                        st.session_state.sync_log.append(msg)
-
-                    try:
-                        engine = SyncEngine(
-                            st.session_state.config,
-                            progress_callback=progress_callback_download,
-                        )
-                        dl_result = engine.download_all_notebooks(
-                            selected_dl_notebooks,
-                            output_dir=output_dir,
-                            timeout=float(dl_timeout),
-                        )
-                        progress_bar.progress(1.0)
-                        status_text.empty()
-
-                        # Show results
-                        downloaded = dl_result.items_uploaded
-                        skipped = dl_result.items_skipped
-                        errors = len(dl_result.errors)
-
-                        if dl_result.success:
-                            st.success(
-                                f"✅ Download complete!\n\n"
-                                f"**{downloaded}** files downloaded, "
-                                f"**{skipped}** skipped (no URL)\n\n"
-                                f"Saved to: `{output_dir}`"
-                            )
-                        else:
-                            st.warning(
-                                f"⚠️ Download completed with issues:\n\n"
-                                f"**{downloaded}** downloaded, "
-                                f"**{skipped}** skipped, "
-                                f"**{errors}** failed"
-                            )
-                            for err in dl_result.errors:
-                                st.error(err)
-
-                        # Show per-notebook breakdown
-                        if dl_result.log:
-                            with st.expander("📋 Per-Notebook Details"):
-                                for entry in dl_result.log:
-                                    st.markdown(entry)
-
-                    except Exception as e:
-                        st.error(f"❌ Download failed: {e}")
-                        logging.exception("Download failed")
-
-        except Exception as e:
-            st.error(f"❌ Failed to load NotebookLM notebooks: {e}")
-            st.info(
-                "Make sure you've authenticated with NotebookLM. "
-                "Run `notebooklm login` in your terminal."
-            )
-
-    # ══════════════════════════════════════
-    # TAB 4: History
-    # ══════════════════════════════════════
-    with tab_history:
-        st.markdown("### 📋 Sync History")
-
-        db = SyncStateDB()
-        logs = db.get_recent_logs(20)
-
-        if logs:
-            for entry in logs:
-                icon = (
-                    "✅" if entry.status == "success"
-                    else "⚠️" if entry.status == "partial"
-                    else "❌"
-                )
-                st.markdown(
-                    f"**{icon} {entry.action}** — {entry.timestamp}\n\n"
-                    f"<small>{entry.details}</small>",
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption("No sync history yet. Run your first sync above!")
-
-
-# ── Live Log (from current session) ──
-if st.session_state.sync_log:
-    with st.expander("📜 Detailed Log (Current Session)", expanded=False):
-        for msg in st.session_state.sync_log:
-            st.text(msg)
-
-
-# ── Footer ──
-st.divider()
-st.markdown(
-    "<center>"
-    "<small>CiteBridge v1.0 — Built by Rob Voss, Ph.D. / "
-    "<a href='https://www.vossaiconsulting.com'>Voss AI Consulting</a>"
-    " &bull; <a href='https://www.robvoss.com'>robvoss.com</a></small><br>"
-    "<small>Custom AI integrations for business, education, and finance</small>"
-    "</center>",
-    unsafe_allow_html=True,
-)
+st.caption(f"CiteBridge {__version__} · Built by Rob Voss, Ph.D. · "
+           "[Voss AI Consulting](https://www.vossaiconsulting.com) · "
+           "Independent tool, not affiliated with Zotero or Google.")

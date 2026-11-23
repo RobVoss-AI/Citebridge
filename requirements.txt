@@ -1,13 +1,8 @@
-pyzotero>=1.6.0
-# Pinned: notebooklm-py drives Google's undocumented APIs and changes its
-# public API across minor versions (e.g. sources.get_guide() returns a dict
-# in 0.3.x but a typed dataclass in 0.6.0+). CiteBridge is written and tested
-# against the 0.3.x line. Upgrade deliberately, not implicitly — see README.
-#
-# The [browser] extra installs Playwright, which `notebooklm login` requires to
-# open the Google sign-in window. After installing, you must also download the
-# browser binary once:  playwright install chromium
-notebooklm-py[browser]>=0.3.2,<0.4.0
-streamlit>=1.30.0
+# CiteBridge v2 — core (official Gemini Notebook API; no browser automation)
+pyzotero>=1.13.0          # Zotero web API + Zotero 7 local API (local=True)
+google-auth>=2.40.0
+google-auth-oauthlib>=1.2.0
+requests>=2.31.0          # google-auth's token refresh transport
+httpx>=0.27.0             # Gemini Notebook API calls and resumable uploads
+streamlit>=1.40.0
 pyyaml>=6.0
-httpx>=0.24.0
