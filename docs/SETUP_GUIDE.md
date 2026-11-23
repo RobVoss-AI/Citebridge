@@ -1,331 +1,145 @@
-# CiteBridge — Setup & Implementation Guide
+# CiteBridge v2 — Setup Guide
 
-**One-button bidirectional sync between Zotero and Google NotebookLM.**
-
-This guide takes you from a blank machine to a working sync. It's layered: a
-**fast path** for confident users up top, then a **detailed walkthrough** and a
-deep **troubleshooting** section below. If you only read one thing, read the box
-directly below — it covers the three things that trip almost everyone up.
+Connect your Zotero library to **Gemini Notebook** (formerly NotebookLM). This takes about
+10 minutes. The fast path is first; the full walkthrough and troubleshooting follow.
 
 ---
 
-## ⚠️ Read this first — the 3 things that trip people up
+## ⚠️ Read this first
 
-1. **You need Python 3.10 or newer.** Older versions (3.9 and below) will fail to
-   install the NotebookLM library. Check with `python3 --version`.
-
-2. **The NotebookLM login needs a browser engine (Playwright + Chromium).** This
-   is the #1 reason setup fails partway through. The setup script installs it for
-   you, but if you install manually you must run `playwright install chromium`
-   **before** `notebooklm login`. (See [Step 3](#step-3--authenticate-notebooklm).)
-
-3. **Your NotebookLM login expires every few weeks.** This is normal — it uses
-   your Google account cookies, which Google rotates. When sync suddenly stops
-   working with an "authentication expired" message, the fix is almost always to
-   **re-run `notebooklm login`**. Nothing is broken.
-
-> **Why is NotebookLM finicky?** Google has no public NotebookLM API for personal
-> accounts (only an Enterprise/Google Cloud one). CiteBridge uses a community
-> library that drives NotebookLM the same way your browser does. It works well,
-> but it depends on your Google session staying valid. Your **Zotero** side, by
-> contrast, uses an official, stable API and rarely needs attention.
+1. **Use a personal Google account.** Gemini Notebook's API doesn't support work or school
+   (Google Workspace) accounts yet.
+2. **Open Gemini Notebook once** at [notebook.google.com](https://notebook.google.com) with that
+   account before your first sync, so your account exists there.
+3. **You need Python 3.10 or newer.** Check with `python3 --version`.
 
 ---
 
-## Fast path (≈15 minutes)
-
-For users comfortable with a terminal. Everyone else: skip to the
-[detailed walkthrough](#detailed-walkthrough).
+## Fast path
 
 ```bash
-# 1. Get the code and enter the folder
 git clone https://github.com/RobVoss-AI/Citebridge.git
 cd Citebridge
-
-# 2. One-command setup (creates venv, installs deps + browser, runs login)
-chmod +x setup.sh && ./setup.sh        # macOS / Linux
-#   setup.bat                          # Windows: double-click instead
-
-# 3. Launch the app
-source .venv/bin/activate               # macOS / Linux  (.venv\Scripts\activate on Windows)
+# Put oauth_client.json (from your CiteBridge download) in this folder, then:
+chmod +x setup.sh && ./setup.sh        # Windows: double-click setup.bat
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
 streamlit run app.py
 ```
 
-Then in the browser tab that opens (usually `http://localhost:8501`):
-
-1. Sidebar → **Zotero Connection** → paste your API Key + Library ID → **Save & Test Zotero** (green check).
-2. Sidebar → **NotebookLM Connection** → **Verify NotebookLM Connection** (status flips to ✅ Connected).
-3. Main page → **Push to NotebookLM** tab → check a collection → **PUSH TO NOTEBOOKLM**.
-
-Need a Zotero API key? See [Step 4](#step-4--get-your-zotero-api-key--library-id).
+In the CiteBridge tab that opens:
+1. Click **Sign in with Google** and approve access to your notebooks.
+2. Open **Zotero 7 desktop** (CiteBridge reads your library from it).
+3. Tick your collections → **Preview what will be sent** → **Send to Gemini Notebook**.
 
 ---
 
 ## Detailed walkthrough
 
-### Step 0 — Prerequisites
+### 1. Install
 
-| You need | How to check / get it |
-|----------|------------------------|
-| **Python 3.10+** | Run `python3 --version`. If it's missing or older than 3.10, install from [python.org/downloads](https://www.python.org/downloads/). |
-| **Zotero**, with at least one collection of items | The free [Zotero desktop app](https://www.zotero.org/download/). Add a few PDFs to a collection to test with. |
-| **A Google account** with NotebookLM access | Confirm you can open [notebooklm.google.com](https://notebooklm.google.com) and see your notebooks. |
-| **A terminal** | macOS: *Terminal* app. Windows: *Command Prompt* or *PowerShell*. |
+Run `setup.sh` (macOS/Linux) or `setup.bat` (Windows). It creates a private Python environment,
+installs CiteBridge, and puts the Google sign-in file (`oauth_client.json`) in place. When it asks
+about the **experimental add-on**, answer **N** unless you want notes pulled back into Zotero (see step 7).
 
-### Step 1 — Get the code
+Manual install, if you prefer:
 
 ```bash
-git clone https://github.com/RobVoss-AI/Citebridge.git
-cd Citebridge
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+mkdir -p ~/.citebridge && cp oauth_client.json ~/.citebridge/
 ```
 
-No Git? Download the ZIP from the GitHub page (green **Code** button → **Download ZIP**),
-unzip it, and `cd` into the folder.
+### 2. Let CiteBridge read Zotero
 
-### Step 2 — Set up the environment
+Open **Zotero 7** → **Settings → Advanced** → tick **Allow other applications on this computer to
+communicate with Zotero**. Keep Zotero open while you sync. No API key is needed to *send* to
+Gemini Notebook.
 
-**Option A — automatic (recommended).** The setup script creates an isolated
-Python environment, installs everything (including the browser engine), and
-walks you through login:
+> No Zotero desktop on this machine? Add a Zotero API key instead (step 6) and CiteBridge reads
+> through zotero.org.
+
+### 3. Sign in with Google
+
+`streamlit run app.py`, then **Sign in with Google** in the sidebar. A browser tab asks you to allow
+CiteBridge to manage your Gemini Notebook notebooks. CiteBridge stores the sign-in on your computer
+only (`~/.citebridge/accounts/`), so you won't need to repeat this.
+
+> While CiteBridge is in Google's early-access review, Google may show an "unverified app" screen
+> (choose **Advanced → Go to CiteBridge**) and ask you to sign in again about once a week.
+
+### 4. Pick your plan size
+
+Sidebar → **Sync settings** → choose your Gemini Notebook plan (Free, Plus, Pro, Ultra). This sets how
+many sources fit in one notebook (50 on Free). Collections that don't fit are split into
+*Name (1/2)*, *Name (2/2)*… automatically.
+
+Other options (all on by default):
+- **Bibliography source** — lists every item with author-year, DOI and Zotero key, so Gemini cites
+  your sources correctly. Recommended.
+- **My highlights & notes** — your PDF annotations and Zotero notes, gathered into one source.
+- **Items without a PDF** — sent as a web page (blog posts, videos, news) or as a citation card
+  (everything else).
+
+### 5. Send collections
+
+Tick collections → **Preview what will be sent**. The preview shows exactly what will be created
+before anything happens. Then **Send to Gemini Notebook**. Sources appear in your notebook named
+**Author (Year) — Title**. The **Processing** tab shows anything still being processed or rejected,
+with the reason in plain English.
+
+Running it again only sends what's new or changed.
+
+### 6. Bring research back into Zotero
+
+Add your Zotero API key first: [zotero.org/settings/keys](https://www.zotero.org/settings/keys) →
+**Create new private key** → allow library access **and write access** → paste the key and your
+numeric **Library ID** into the sidebar's Zotero section.
+
+Then on the **Bring back to Zotero** tab:
+- **Import sources I added in Gemini Notebook** — web pages, videos and Discover results you added
+  there become Zotero items in a "From Gemini Notebook: …" collection.
+
+### 7. (Optional) Experimental: pull notes and text back
+
+Gemini Notebook's official API can't read notes or source text yet. The experimental add-on can, using
+an unofficial library with its own browser login that **expires every few weeks**:
 
 ```bash
-chmod +x setup.sh && ./setup.sh     # macOS / Linux
-```
-
-On **Windows**, double-click `setup.bat` instead.
-
-**Option B — manual.** If you'd rather run each step yourself:
-
-```bash
-python3 -m venv .venv               # create an isolated environment
-source .venv/bin/activate           # macOS / Linux
-#   .venv\Scripts\activate          # Windows
-
-pip install -r requirements.txt     # install CiteBridge's dependencies
-playwright install chromium         # one-time browser download for NotebookLM login
-```
-
-> **What's a virtual environment (`.venv`)?** A sandbox that keeps CiteBridge's
-> dependencies from colliding with other Python tools on your machine. You
-> **activate** it (`source .venv/bin/activate`) each time you open a new terminal
-> to work with CiteBridge. Your prompt will show `(.venv)` when it's active.
-
-### Step 3 — Authenticate NotebookLM
-
-```bash
+pip install -r requirements-experimental.txt
+playwright install chromium
 notebooklm login
 ```
 
-This opens a Chromium browser window. **Sign in to your Google account**, wait
-until you see the NotebookLM page load, then return to the terminal and **press
-Enter** to save your session.
-
-- Your session is stored locally at `~/.notebooklm/storage_state.json`. It never
-  leaves your machine.
-- **If you see `Playwright not installed`:** you skipped the browser step. Run
-  `pip install "notebooklm-py[browser]"` then `playwright install chromium`, and
-  try again. (The automatic setup does this for you.)
-- **Remember:** this session expires every few weeks. Re-running `notebooklm login`
-  is the standard fix when sync later fails.
-
-### Step 4 — Get your Zotero API key + Library ID
-
-1. Go to [zotero.org/settings/keys](https://www.zotero.org/settings/keys).
-2. Click **Create new private key**.
-3. Name it **CiteBridge**.
-4. Under *Personal Library*, check **Allow library access** and **Allow write
-   access** (write is needed to sync notes back into Zotero).
-5. Click **Save Key** and **copy the key** — you won't be able to see it again.
-6. Note your **Library ID**: the number shown near the top of that page
-   ("Your userID for use in API calls is **XXXXXXX**"). It's a *number*, not your
-   username.
-
-### Step 5 — Launch the app
-
-```bash
-source .venv/bin/activate     # if not already active (.venv\Scripts\activate on Windows)
-streamlit run app.py
-```
-
-A browser tab opens at `http://localhost:8501`. Leave the terminal running while
-you use CiteBridge — closing it stops the app.
-
-### Step 6 — Connect Zotero
-
-In the sidebar, expand **🔶 Zotero Connection**:
-
-1. Paste your **API Key** and **Library ID**.
-2. Leave **Library Type** as `user` (use `group` only for shared group libraries).
-3. *(Optional but faster)* Set **Local Storage Path** to your `Zotero/storage`
-   folder so CiteBridge reads PDFs from disk instead of downloading them.
-   CiteBridge tries to auto-detect this.
-4. Click **💾 Save & Test Zotero** — you should get a green ✅.
-
-### Step 7 — Verify NotebookLM
-
-Expand **🟣 NotebookLM Connection** and click **🔗 Verify NotebookLM Connection**.
-
-CiteBridge does a **real** check here, so the status it reports is trustworthy:
-
-| Status on the dashboard | What it means | What to do |
-|--------------------------|---------------|------------|
-| ✅ **Connected** | A live API call succeeded this session. | You're good — start syncing. |
-| 🔑 **Verify needed** | Login credentials exist, but haven't been confirmed this session. | Click **Verify NotebookLM Connection**. |
-| ❌ **Not authenticated** | No login found. | Run `notebooklm login` in your terminal (Step 3). |
-
-> If **Verify** fails even though you logged in earlier, your session has almost
-> certainly **expired** — re-run `notebooklm login` and verify again.
-
-### Step 8 — Your first push (Zotero → NotebookLM)
-
-1. Open the **📤 Push to NotebookLM** tab.
-2. Check one or more collections.
-3. Click **📤 PUSH TO NOTEBOOKLM**.
-
-CiteBridge creates a NotebookLM notebook named after each collection and uploads
-its PDFs as sources. NotebookLM then needs a little time to process each PDF —
-larger files take longer. Already-synced items are skipped automatically on
-future runs.
-
-### Step 9 — The other workflows
-
-CiteBridge has four tabs:
-
-- **📤 Push to NotebookLM** — Zotero collections → NotebookLM notebooks (Step 8).
-- **📥 Import Sources to Zotero** — pull a notebook's sources *into* Zotero as
-  proper library items, with URLs, item types, and the **full extracted text**
-  saved as a note. Each notebook becomes a Zotero collection prefixed `NLM:`.
-- **💾 Download Source Files** — download the original source files (PDFs, web
-  pages) from a notebook to a local folder. Great for sources NotebookLM's
-  research features added that you don't have a copy of.
-- **📋 Sync History** — a log of past runs.
-
-**Reverse note sync:** under **🔄 Sync Options** you can enable *"Sync NotebookLM
-notes back to Zotero."* When on, AI-generated notes from a notebook are matched
-to Zotero items by title and attached as notes tagged `notebooklm-sync`.
+Then enable it in the sidebar (🧪 Experimental). **Pull notes into Zotero** attaches each note to the
+item it cites by author-year; notes citing several sources (or none) are saved together as one note
+on the collection, never guessed.
 
 ---
 
-## How it works (and why your data is safe)
+## Cleanup: why sources pile up
 
-```
-Zotero Collection          Google NotebookLM
-┌─────────────────┐        ┌──────────────────┐
-│  AI Ethics      │──push─►│  AI Ethics       │
-│  ├── paper1.pdf │        │  ├── paper1 (src) │
-│  ├── paper2.pdf │◄─import┤  ├── paper2 (src) │
-│  └── paper3.pdf │◄─notes─┤  └── AI Notes     │
-└─────────────────┘        └──────────────────┘
-```
-
-- **State tracking.** CiteBridge keeps a small local database at
-  `~/.citebridge/sync_state.db` recording what's already synced (with file
-  hashes), so repeat runs only handle new or changed items.
-- **Your settings** live at `~/.citebridge/config.yaml`. Your credentials never
-  leave your machine.
-- **Data safety.** CiteBridge only *reads* from Zotero, except when you opt in to
-  writing notes back. It never deletes or modifies your existing Zotero items. If
-  the NotebookLM connection ever breaks, your Zotero library is untouched.
+Gemini Notebook's API can't delete yet. When you replace a PDF or remove an item from a collection,
+the old source stays in the notebook (and uses one of its source slots). The **Cleanup** tab lists
+them with links. Delete them in Gemini Notebook and click **Done**, or just sync again; CiteBridge
+notices they're gone.
 
 ---
 
 ## Troubleshooting
 
-Messages below are the actual ones you'll see, with the fix.
-
-### "Authentication expired or invalid. Redirected to accounts.google.com…"
-Your NotebookLM session expired (this happens every few weeks). **Fix:**
-```bash
-source .venv/bin/activate
-notebooklm login
-```
-Then click **Verify NotebookLM Connection** in the app.
-
-### Dashboard shows 🔑 "Verify needed" and won't say Connected
-Click **Verify NotebookLM Connection** in the sidebar. If it then errors, your
-session expired — re-run `notebooklm login`.
-
-### "Playwright not installed. Run: pip install notebooklm[browser] …"
-You skipped the browser engine. **Fix:**
-```bash
-pip install "notebooklm-py[browser]"
-playwright install chromium
-```
-Then retry `notebooklm login`.
-
-### `notebooklm: command not found`
-Your virtual environment isn't active. **Fix:** `source .venv/bin/activate`
-(macOS/Linux) or `.venv\Scripts\activate` (Windows), then try again.
-
-### `ModuleNotFoundError: No module named 'streamlit'` (or `pyzotero`, etc.)
-Same cause — the venv isn't active, or dependencies weren't installed. Activate
-the venv and run `pip install -r requirements.txt`.
-
-### NotebookLM library won't install / weird install errors
-You're likely on Python older than 3.10. Check `python3 --version` and install a
-newer Python, then recreate the venv.
-
-### "Zotero connection failed"
-- Double-check the **API key** (re-copy it from the Zotero keys page).
-- The **Library ID is a number**, not your username.
-- Make sure the key has **library access** enabled (and **write access** if you
-  want note sync-back).
-
-### "No PDFs found for items"
-Some items simply have no PDF attachment. For items that do, set the **Local
-Storage Path** to your `Zotero/storage` folder, or let CiteBridge fall back to
-downloading via the Zotero API.
-
-### Streamlit didn't open / "port already in use"
-Run it on a different port: `streamlit run app.py --server.port 8502`.
-
-### Sync seems slow
-Normal — NotebookLM processes each uploaded PDF before the next step, and large
-PDFs (50 MB+) take longer.
-
-### Don't blindly upgrade the NotebookLM library
-CiteBridge pins `notebooklm-py` to a tested version. Newer releases change the
-API and can break the import flow. Avoid `pip install --upgrade notebooklm-py`
-unless you intend to re-test.
+| You see | Do this |
+|---|---|
+| "Google's sign-in file is missing" | Copy `oauth_client.json` from your CiteBridge download to `~/.citebridge/`. |
+| "Work/school accounts aren't supported" | Sign out and sign in with a personal Gmail account. |
+| "This Google account hasn't used Gemini Notebook yet" | Open [notebook.google.com](https://notebook.google.com) once with that account, then retry. |
+| "Your Google sign-in has expired" | Click **Sign in with Google** again. (Weekly during early access.) |
+| "Can't read your Zotero library" | Open Zotero 7 and enable the setting in step 2, or add an API key. |
+| A source **FAILED: paywall / unreachable** | Web pages that fail are automatically replaced by a citation card. |
+| A source **FAILED: source limit** | Your notebook is full. Clean up old sources, or set the right plan size. |
+| "Experimental login expired" | Run `notebooklm login` again (only affects the experimental add-on). |
 
 ---
 
-## Maintenance & FAQ
-
-- **How often do I re-authenticate NotebookLM?** Whenever it stops working —
-  typically every few weeks. It's a 30-second `notebooklm login`.
-- **Do I have to keep the terminal open?** Yes, while the app is running. Closing
-  it stops the local server.
-- **Where is my data stored?** Settings: `~/.citebridge/config.yaml`. Sync state:
-  `~/.citebridge/sync_state.db`. NotebookLM session: `~/.notebooklm/`. All local.
-- **Can I run this on a server / Streamlit Cloud?** Yes — set the
-  `NOTEBOOKLM_AUTH_JSON` secret to the contents of your
-  `~/.notebooklm/storage_state.json`. (Cloud sessions still expire and need
-  refreshing.)
-- **Is my Zotero data ever at risk?** No. CiteBridge only writes to Zotero when
-  you explicitly enable note sync-back, and even then it only *adds* notes.
-
----
-
-## Quick command reference
-
-```bash
-# First-time setup (manual)
-python3 -m venv .venv
-source .venv/bin/activate            # .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-playwright install chromium
-notebooklm login
-
-# Every time you use CiteBridge
-source .venv/bin/activate
-streamlit run app.py
-
-# When NotebookLM stops working
-notebooklm login                     # then click "Verify" in the app
-```
-
----
-
-*Built by [Voss AI Consulting](https://www.vossaiconsulting.com). Questions or
-custom integrations: [vossaiconsulting.com](https://www.vossaiconsulting.com).*
+*Built by [Voss AI Consulting](https://www.vossaiconsulting.com). Want it set up for you?
+[Book a call](https://meetings-na2.hubspot.com/rob-voss).*
